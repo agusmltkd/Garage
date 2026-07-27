@@ -380,9 +380,18 @@ const PLAN_DEF = () => ([
   {id:'itv',     n:'ITV',                       km:0,     meses:12, ult:null, ultKm:null},
   {id:'seguro',  n:'Seguro',                    km:0,     meses:12, ult:null, ultKm:null},
   {id:'impuesto',n:'Impuesto de circulación',   km:0,     meses:12, ult:null, ultKm:null},
+  {id:'presiones',n:'Presión de neumáticos',    km:0,     meses:1,  ult:null, ultKm:null},
   {id:'ruedas',  n:'Neumáticos',                km:50000, meses:0,  ult:null, ultKm:null}
 ]);
-function plan(){ if(!DB.plan) DB.plan = PLAN_DEF(); return DB.plan; }
+/* al abrir una copia antigua, incorpora los puntos del plan que no existieran */
+function plan(){
+  if(!Array.isArray(DB.plan)){ DB.plan = PLAN_DEF(); return DB.plan; }
+  const base = PLAN_DEF();
+  let nuevos = false;
+  base.forEach(b=>{ if(!DB.plan.some(p=>p.id===b.id)){ DB.plan.push(b); nuevos = true; } });
+  if(nuevos) guardar();
+  return DB.plan;
+}
 
 /* ===================== UTILIDADES ===================== */
 const n2 = v => (v==null||v==='')?null:Number(String(v).replace(',','.'));
@@ -641,6 +650,19 @@ function vResumen(){
       'La línea de puntos es tu media.'+(estimado?' Los litros van estimados a '+num(precioRef(),2)+' €/L.':'')+'</div></div>';
   }
 
+  /* coste de un trayecto */
+  if(l100){
+    const dests = [['Huelva',95],['Cádiz',125],['Córdoba',143],['Málaga',207],['Granada',250],['Madrid',535]];
+    h += '<div class="card"><div class="hd"><h3>Lo que cuesta ir a…</h3></div>'+
+      '<div class="chips">'+dests.map(d=>'<button class="chip" data-trkm="'+d[1]+'">'+d[0]+'</button>').join('')+'</div>'+
+      '<div class="grid2">'+
+        '<label class="f"><span class="l">Kilómetros</span>'+
+        '<input id="trKm" type="number" inputmode="decimal" step="any" placeholder="0"></label>'+
+        '<label class="f"><span class="l">Viaje</span><select id="trIV">'+
+        '<option value="1">Solo ida</option><option value="2">Ida y vuelta</option></select></label>'+
+      '</div><div id="trOut"></div></div>';
+  }
+
   /* presiones */
   h += '<div class="card"><div class="hd"><h3>Presiones</h3><span class="eyebrow">bar en frío</span></div>'+ tyres(c) +'</div>';
 
@@ -671,7 +693,40 @@ function fila(m){
     '<div class="amt">'+(m.v!=null?eur(m.v,2):'')+'</div></div>';
 }
 function nombrePlan(id){ const p=plan().find(p=>p.id===id); return p?p.n:'Mantenimiento'; }
+
+/* calculadora de trayecto: se engancha despues de pintar el cuadro */
+function pintarTrayecto(){
+  const inp = document.getElementById('trKm');
+  if(!inp) return;
+  const sel = document.getElementById('trIV'), out = document.getElementById('trOut');
+  const l = pondL(consumos().slice(-5)), p = precioRef();
+  const upd = ()=>{
+    const km = (n2(inp.value)||0) * Number(sel.value||1);
+    if(!km || !l){ out.innerHTML = '<div class="note">Escribe los kilómetros o elige un destino.</div>'; return; }
+    const lit = l*km/100, eu = lit*p;
+    out.innerHTML = '<div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">'+
+      '<span class="num accent" style="font-size:34px">'+eur(eu,2)+'</span>'+
+      '<span class="dim">'+num(lit,1)+' L · '+num(km)+' km</span></div>'+
+      '<div class="note" style="margin-top:2px">A '+num(l,1)+' L/100 km y '+num(p,2)+' €/L de referencia.</div>';
+  };
+  inp.oninput = upd; sel.onchange = upd;
+  document.querySelectorAll('[data-trkm]').forEach(b=>{
+    b.onclick = ()=>{
+      inp.value = b.dataset.trkm;
+      document.querySelectorAll('[data-trkm]').forEach(x=>x.classList.toggle('on', x===b));
+      upd();
+    };
+  });
+  upd();
+}
 function tyres(c){
+  const ult = mios(DB.mantenimientos).filter(m=>m.tipo==='presiones')
+              .sort((a,b)=> a.fecha<b.fecha?1:-1)[0];
+  const d = ult ? dias(ult.fecha, hoy()) : null;
+  const cuando = d==null ? 'Sin revisar todavía'
+    : d===0 ? 'Revisadas hoy'
+    : 'Revisadas hace '+d+(d===1?' día':' días');
+  const col = d==null ? 'var(--dim)' : d>45 ? 'var(--bad)' : d>30 ? 'var(--warn)' : 'var(--dim)';
   return '<div class="tyres">'+
     '<div class="tyre"><div class="p">'+esc(c.pDel||'—')+'</div><div class="u">Del. izq</div></div>'+
     '<div class="axle"></div>'+
@@ -680,6 +735,10 @@ function tyres(c){
     '<div class="axle"></div>'+
     '<div class="tyre"><div class="p">'+esc(c.pTras||'—')+'</div><div class="u">Tras. der</div></div>'+
     '<div class="lbl">'+esc(c.medidaDel||'medida sin definir')+' · con carga '+esc(c.pDelCarga||'—')+' / '+esc(c.pTrasCarga||'—')+'</div>'+
+  '</div>'+
+  '<div style="display:flex;align-items:center;gap:12px;margin-top:12px">'+
+    '<div style="flex:1;font-size:13px;color:'+col+'">'+cuando+'</div>'+
+    '<button class="btn gh" style="width:auto;padding:8px 14px" data-accion="presiones">Revisadas hoy</button>'+
   '</div>';
 }
 
@@ -1061,8 +1120,14 @@ function deepLink(){
     if(i>0) p[decodeURIComponent(kv.slice(0,i))] = decodeURIComponent(kv.slice(i+1).replace(/\+/g,' ')); });
   history.replaceState(null,'',location.pathname+location.search);
   const pre = {};
-  ['total','trip','litros','precioL','km','estacion','importe','cat','concepto','fecha','notas']
-    .forEach(k=>{ if(p[k]) pre[k] = p[k]; });
+  /* Atajos puede mandar los km como "1.030": quitamos el separador de miles */
+  const limpia = (v,entero) => {
+    v = String(v).replace(/\s|\u00a0/g,'');
+    return entero ? v.replace(/[.\u2024]/g,'') : v;
+  };
+  ['total','litros','precioL','estacion','cat','concepto','fecha','notas']
+    .forEach(k=>{ if(p[k]) pre[k] = limpia(p[k],false); });
+  ['trip','km','importe'].forEach(k=>{ if(p[k]) pre[k] = limpia(p[k], k!=='importe'); });
   if(!pre.fecha) pre.fecha = hoy();
   if(p.nuevo==='rep' || p.nuevo==='repostaje'){ ir('repostajes'); setTimeout(()=>formRepostaje(null,pre),80); }
   else if(p.nuevo==='gasto'){ ir('gastos'); setTimeout(()=>formGasto(null,pre),80); }
@@ -1255,6 +1320,10 @@ function menu(){
     campo('precioRef','€ por litro','number',DB.precioRef||'1.50')+
     '<div class="note" style="margin:-6px 0 10px">Se usa para estimar los litros de los repostajes en los que solo apuntas el importe.</div>'+
     '<div class="btnrow"><button class="btn gh" id="refBtn">Guardar precio</button></div>';
+  h += '<div class="sep"></div><div class="eyebrow" style="margin-bottom:8px">Recordatorios</div>'+
+    '<div class="btnrow"><button class="btn gh" id="icsBtn">Vencimientos al calendario</button></div>'+
+    '<div class="note" style="margin-top:8px">Descarga un archivo con la ITV, el seguro y las revisiones que tengan fecha. '+
+    'Lo abres, lo añades a Calendario y te avisa una semana antes y el día anterior.</div>';
   h += '<div class="sep"></div><div class="eyebrow" style="margin-bottom:8px">Copias de seguridad</div>'+
     '<div class="btnrow"><button class="btn gh" id="expBtn">Exportar</button>'+
     '<button class="btn gh" id="impBtn">Importar</button></div>'+
@@ -1275,6 +1344,7 @@ function menu(){
     DB.coches = DB.coches.filter(x=>x.id!==c.id); DB.activo = DB.coches[0].id;
     guardar(); cerrar(); render(); toast('Coche eliminado');
   };
+  document.getElementById('icsBtn').onclick = calendario;
   document.getElementById('copyBtn').onclick = ()=>{
     const txt = enlaceEjemplo();
     if(navigator.clipboard) navigator.clipboard.writeText(txt).then(()=>toast('Enlace copiado')).catch(()=>toast('Cópialo a mano'));
@@ -1288,6 +1358,43 @@ function menu(){
   document.getElementById('impBtn').onclick = ()=>importar(false);
   document.getElementById('csvBtn').onclick = ()=>importar(true);
 }
+/* vencimientos al calendario: iOS no deja programar avisos desde una web,
+   asi que generamos un .ics y que avise Calendario */
+function calendario(){
+  const c = coche(), st = estadoPlan().filter(p=>p.prox);
+  if(!st.length){ toast('Todavía no hay vencimientos con fecha'); return; }
+  const pad = n => String(n).padStart(2,'0');
+  const d = new Date();
+  const sello = d.getUTCFullYear()+pad(d.getUTCMonth()+1)+pad(d.getUTCDate())+'T'+
+                pad(d.getUTCHours())+pad(d.getUTCMinutes())+'00Z';
+  const lim = s => String(s).replace(/([,;\\])/g,'\\$1').replace(/\r?\n/g,' ');
+  const nom = c.alias || c.modelo || 'el coche';
+  let L = ['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Garaje//ES','CALSCALE:GREGORIAN','METHOD:PUBLISH'];
+  st.forEach(p=>{
+    const ini = p.prox.replace(/-/g,'');
+    const x = new Date(p.prox+'T12:00'); x.setDate(x.getDate()+1);
+    const fin = x.toISOString().slice(0,10).replace(/-/g,'');
+    L = L.concat(['BEGIN:VEVENT',
+      'UID:garaje-'+p.id+'-'+ini+'@garaje',
+      'DTSTAMP:'+sello,
+      'DTSTART;VALUE=DATE:'+ini,
+      'DTEND;VALUE=DATE:'+fin,
+      'SUMMARY:'+lim(p.n+' - '+nom),
+      'DESCRIPTION:'+lim('Última vez: '+(p.uf?fFecha(p.uf):'sin registrar')+
+        (p.proxKm?'. Toca a los '+num(p.proxKm)+' km':'')),
+      'BEGIN:VALARM','TRIGGER:-P7D','ACTION:DISPLAY','DESCRIPTION:'+lim(p.n),'END:VALARM',
+      'BEGIN:VALARM','TRIGGER:-P1D','ACTION:DISPLAY','DESCRIPTION:'+lim(p.n),'END:VALARM',
+      'END:VEVENT']);
+  });
+  L.push('END:VCALENDAR');
+  const blob = new Blob([L.join('\r\n')],{type:'text/calendar;charset=utf-8'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'garaje-vencimientos.ics'; a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),2000);
+  toast(st.length+' vencimientos listos para Calendario');
+}
+
 function exportar(){
   const blob = new Blob([JSON.stringify(DB,null,1)],{type:'application/json'});
   const a = document.createElement('a');
@@ -1351,6 +1458,7 @@ function render(){
   document.getElementById('v-'+vista).innerHTML = VIEWS[vista]();
   document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('on', b.dataset.t===vista));
   document.querySelectorAll('section.view').forEach(s=>s.classList.toggle('on', s.id==='v-'+vista));
+  if(vista==='resumen') pintarTrayecto();
   if(vista==='ficha'){
     const b = document.getElementById('addDoc'); if(b) b.onclick = anadirDoc;
     pintarDocs();
@@ -1391,6 +1499,12 @@ document.addEventListener('click', e=>{
     document.querySelectorAll('[data-tema]').forEach(x=>x.classList.toggle('on',x.dataset.tema===DB.tema)); return; }
   const co = t.closest('[data-coche]'); if(co){ DB.activo = co.dataset.coche; guardar(); cerrar(); render(); return; }
   const dc = t.closest('[data-doc]'); if(dc){ verDoc(dc.dataset.doc); return; }
+  const ac = t.closest('[data-accion]');
+  if(ac && ac.dataset.accion==='presiones'){
+    DB.mantenimientos.push({id:uid(), cid:DB.activo, tipo:'presiones', fecha:hoy(),
+      km:kmActual()||'', concepto:'Presiones revisadas', importe:'', taller:'', notas:''});
+    guardar(); render(); toast('Presiones revisadas hoy'); return;
+  }
   if(t.closest('#pedirOdo')){ formOdometro(); return; }
   if(t.id==='editPlan'){ formPlan(); return; }
 });
