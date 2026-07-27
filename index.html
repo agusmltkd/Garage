@@ -319,6 +319,7 @@ select{-webkit-appearance:none;appearance:none;
 <div class="toast" id="toast"></div>
 <script>
 /* ===================== ESTADO ===================== */
+const VERSION = '8 · 27/07/2026';
 const KEY = 'garaje.v1';
 const hoy = () => new Date().toISOString().slice(0,10);
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,7);
@@ -994,13 +995,18 @@ function cargarLeaflet(){
   return window._lp;
 }
 
+let gasReloj = null;
 function cargarGas(recargar){
   gasEstado = 'cargando';
+  clearTimeout(gasReloj);
+  gasReloj = setTimeout(()=>{
+    if(gasEstado === 'cargando'){ gasEstado = 'error'; if(vista==='precios') pintarPrecios(); }
+  }, 15000);
   /* la peticion sale primero: si algo falla al pintar, los datos siguen viniendo */
   fetch('datos/gasolineras.json' + (recargar?('?t='+Date.now()):''), {cache: recargar?'reload':'default'})
     .then(r => r.ok ? r.json() : Promise.reject(r.status))
-    .then(j => { GAS = j; gasEstado = 'ok'; if(vista==='precios') pintarPrecios(); })
-    .catch(e => { console.warn('precios:', e); gasEstado = 'error';
+    .then(j => { clearTimeout(gasReloj); GAS = j; gasEstado = 'ok'; if(vista==='precios') pintarPrecios(); })
+    .catch(e => { clearTimeout(gasReloj); console.warn('precios:', e); gasEstado = 'error';
                   if(vista==='precios') pintarPrecios(); });
   /* ubicacion en paralelo, sin bloquear */
   if(!gasPos && navigator.geolocation){
@@ -1532,6 +1538,7 @@ function menu(){
     '<div class="note" style="margin-top:10px">Todo se guarda solo en este dispositivo. '+
     'Exporta de vez en cuando y guarda el archivo en OneDrive.</div>';
   h += '<div class="sep"></div><div class="btnrow"><button class="btn dan" id="delCoche">Eliminar este coche</button></div>';
+  h += '<div class="note" style="text-align:center;margin-top:16px">Garaje · versión '+VERSION+'</div>';
   abrir('Ajustes', h);
 
   document.getElementById('addCoche').onclick = ()=>{
