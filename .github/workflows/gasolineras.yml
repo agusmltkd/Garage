@@ -1,1 +1,44 @@
+name: Precios de carburante
 
+on:
+  schedule:
+    # 06:15 y 15:15 UTC = 08:15 y 17:15 en Espana (horario de verano)
+    - cron: '15 6 * * *'
+    - cron: '15 15 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: precios
+  cancel-in-progress: false
+
+jobs:
+  actualizar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Descargar precios
+        env:
+          # 41 = Sevilla. Anade mas separadas por comas: '41,21,11'
+          PROVINCIAS: '41'
+          DESTINO: 'datos/gasolineras.json'
+        run: python scripts/gasolineras.py
+
+      - name: Publicar si ha cambiado
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add datos/gasolineras.json
+          if git diff --staged --quiet; then
+            echo "Sin cambios, no hago commit"
+          else
+            git commit -m "Precios de carburante $(date -u +'%Y-%m-%d %H:%M UTC')"
+            git push
+          fi
