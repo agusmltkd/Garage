@@ -103,9 +103,22 @@ section.view.on{display:block}
   background:rgba(24,28,32,.94);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
   border-top:1px solid var(--line);display:flex;padding:6px 4px calc(6px + var(--safe-b))}
 .tabs button{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;
-  padding:6px 2px;color:var(--dim2);font-family:var(--disp);font-size:11px;
-  letter-spacing:.08em;text-transform:uppercase;border-radius:10px}
-.tabs button svg{width:20px;height:20px}
+  padding:6px 1px;color:var(--dim2);font-family:var(--disp);font-size:10px;
+  letter-spacing:.05em;text-transform:uppercase;border-radius:10px;white-space:nowrap}
+.tabs button svg{width:19px;height:19px}
+
+/* mapa de gasolineras */
+.mapa{height:280px;border-radius:var(--r);overflow:hidden;border:1px solid var(--line);
+  margin-bottom:14px;background:var(--panel)}
+.mapa:empty{display:none}
+.leaflet-container{background:var(--bg2)!important;font-family:var(--body)}
+.leaflet-control-attribution{background:rgba(21,24,27,.75)!important;color:var(--dim2)!important;
+  font-size:9px!important}
+.leaflet-control-attribution a{color:var(--dim)!important}
+.pin{font-family:var(--disp);font-size:12px;font-weight:600;font-variant-numeric:tabular-nums;
+  text-align:center;line-height:20px;height:20px;border-radius:10px;color:#14171A;
+  box-shadow:0 2px 6px rgba(0,0,0,.5);border:1px solid rgba(0,0,0,.35)}
+.pin.ok{background:#79C08D}.pin.warn{background:#E5A93F}.pin.bad{background:#E0563C}
 .tabs button.on{color:var(--accent)}
 .fab{position:fixed;right:18px;bottom:calc(76px + var(--safe-b));z-index:46;
   width:54px;height:54px;border-radius:50%;background:var(--accent);color:#14171A;
@@ -262,6 +275,7 @@ select{-webkit-appearance:none;appearance:none;
 <main>
   <section class="view on" id="v-resumen"></section>
   <section class="view" id="v-repostajes"></section>
+  <section class="view" id="v-precios"></section>
   <section class="view" id="v-gastos"></section>
   <section class="view" id="v-taller"></section>
   <section class="view" id="v-ficha"></section>
@@ -278,6 +292,9 @@ select{-webkit-appearance:none;appearance:none;
   <button data-t="repostajes">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V6a2 2 0 012-2h6a2 2 0 012 2v14"/><path d="M3 20h12"/><path d="M14 9h3a2 2 0 012 2v5a1.5 1.5 0 003 0V9l-2.5-3"/><path d="M6.5 8h5"/></svg>
     <span>Repostajes</span></button>
+  <button data-t="precios">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s7-6.3 7-11a7 7 0 10-14 0c0 4.7 7 11 7 11z"/><circle cx="12" cy="10" r="2.4"/></svg>
+    <span>Precios</span></button>
   <button data-t="gastos">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5A2.5 2.5 0 015.5 6h13A2.5 2.5 0 0121 8.5v7A2.5 2.5 0 0118.5 18h-13A2.5 2.5 0 013 15.5z"/><path d="M3 10.5h18"/><path d="M7 14.5h3"/></svg>
     <span>Gastos</span></button>
@@ -833,6 +850,183 @@ function vGastos(){
 function blank(t,p,nuevo,btn){
   return '<div class="card"><div class="blank"><div class="big">'+esc(t)+'</div><p>'+esc(p)+'</p>'+
     '<button class="btn pri" data-nuevo="'+nuevo+'" style="max-width:280px;margin:0 auto">'+esc(btn)+'</button></div></div>';
+}
+/* ===================== PRECIOS DE CARBURANTE ===================== */
+const CARB = [['d','Gasóleo A'],['dp','Gasóleo premium'],['g95','Gasolina 95'],['g98','Gasolina 98']];
+let GAS = null;           // datos del archivo
+let gasEstado = 'nada';   // nada | cargando | ok | error
+let gasCarb = 'd';
+let gasRadio = 10;
+let gasOrden = 'precio';
+let gasPos = null;        // {lat,lon} del usuario
+let gasMapa = null;
+
+function distKm(a, b, c, d){
+  const R = 6371, r = x => x*Math.PI/180;
+  const dLat = r(c-a), dLon = r(d-b);
+  const s = Math.sin(dLat/2)**2 + Math.cos(r(a))*Math.cos(r(c))*Math.sin(dLon/2)**2;
+  return 2*R*Math.asin(Math.sqrt(s));
+}
+
+function vPrecios(){
+  let h = '<div class="chips">'+CARB.map(c=>
+    '<button class="chip'+(gasCarb===c[0]?' on':'')+'" data-carb="'+c[0]+'">'+c[1]+'</button>').join('')+'</div>';
+  h += '<div id="gasCab"></div>';
+  h += '<div id="gasMapa" class="mapa"></div>';
+  h += '<div class="card"><div class="hd"><h3>Cerca de ti</h3>'+
+       '<button class="act" id="gasRecargar">Actualizar</button></div>'+
+       '<div class="grid2">'+
+         '<label class="f"><span class="l">Distancia</span><select id="gasRad">'+
+           [5,10,25,50].map(r=>'<option value="'+r+'"'+(gasRadio===r?' selected':'')+'>'+r+' km</option>').join('')+
+         '</select></label>'+
+         '<label class="f"><span class="l">Ordenar por</span><select id="gasOrd">'+
+           '<option value="precio"'+(gasOrden==='precio'?' selected':'')+'>Precio</option>'+
+           '<option value="dist"'+(gasOrden==='dist'?' selected':'')+'>Distancia</option>'+
+         '</select></label>'+
+       '</div><div id="gasLista"></div></div>';
+  return h;
+}
+
+/* estaciones que venden el carburante elegido, con distancia, ya filtradas */
+function gasCerca(){
+  if(!GAS || !GAS.e) return [];
+  const o = gasPos;
+  return GAS.e
+    .filter(e => e.p && e.p[gasCarb] != null)
+    .map(e => Object.assign({}, e, {km: o ? distKm(o.lat,o.lon,e.lat,e.lon) : null}))
+    .filter(e => !o || e.km <= gasRadio)
+    .sort((a,b) => gasOrden==='dist' && o ? a.km-b.km : (a.p[gasCarb]-b.p[gasCarb]));
+}
+
+function pintarPrecios(){
+  const cab = document.getElementById('gasCab');
+  if(!cab) return;
+  if(gasEstado === 'cargando'){ cab.innerHTML = '<div class="card tight"><div class="note">Buscando precios…</div></div>'; }
+  if(gasEstado === 'nada'){ cargarGas(); return; }
+  if(gasEstado === 'error'){
+    cab.innerHTML = '<div class="card"><div class="blank"><div class="big">Todavía no hay precios</div>'+
+      '<p>Falta el archivo <b>datos/gasolineras.json</b>. Lo genera la tarea de GitHub: entra en la pestaña Actions '+
+      'de tu repositorio, abre «Precios de carburante» y dale a Run workflow.</p></div></div>';
+    document.getElementById('gasLista').innerHTML = '';
+    return;
+  }
+
+  const lista = gasCerca();
+  const nom = (CARB.find(c=>c[0]===gasCarb)||['','' ])[1];
+  const barato = lista.length ? lista.reduce((m,e)=> e.p[gasCarb]<m ? e.p[gasCarb] : m, 9) : null;
+  const caro = lista.length ? lista.reduce((m,e)=> e.p[gasCarb]>m ? e.p[gasCarb] : m, 0) : null;
+
+  cab.innerHTML = '<div class="cluster">'+
+    cell('Más barata', barato?num(barato,3):'—','€/L', lista.length?esc(lista.slice().sort((a,b)=>a.p[gasCarb]-b.p[gasCarb])[0].r):'sin datos', true)+
+    cell('Diferencia', (barato&&caro)?num((caro-barato)*100,0):'—','cént', 'entre la más barata y la más cara')+
+    cell(nom, lista.length,'', gasPos?('a menos de '+gasRadio+' km'):'toda la provincia')+
+    cell('Datos del', (GAS.fecha||'—').slice(0,10),'', 'según el Ministerio')+
+  '</div>';
+
+  const cont = document.getElementById('gasLista');
+  if(!lista.length){
+    cont.innerHTML = '<div class="note">No hay estaciones con '+esc(nom)+' en ese radio. Prueba a ampliarlo.</div>';
+  } else {
+    const t1 = barato + (caro-barato)/3, t2 = barato + 2*(caro-barato)/3;
+    cont.innerHTML = lista.slice(0,40).map((e,i)=>{
+      const p = e.p[gasCarb];
+      const col = p<=t1 ? 'var(--ok)' : p<=t2 ? 'var(--warn)' : 'var(--bad)';
+      return '<div class="row tap" data-gas="'+i+'"><div class="ic" style="background:transparent;color:'+col+'">'+
+        ico('fuel')+'</div>'+
+        '<div class="main"><div class="t">'+esc(e.r||'Sin rótulo')+'</div>'+
+        '<div class="s">'+esc(e.m)+(e.km!=null?' · '+num(e.km,1)+' km':'')+'</div></div>'+
+        '<div class="amt" style="color:'+col+'">'+num(p,3)+'<em>€/L</em></div></div>';
+    }).join('');
+  }
+  pintarMapa(lista.slice(0,40), barato, caro);
+}
+
+function pintarMapa(lista, barato, caro){
+  const div = document.getElementById('gasMapa');
+  if(!div || !lista.length) return;
+  cargarLeaflet().then(ok=>{
+    if(!ok || !document.getElementById('gasMapa')) return;
+    if(gasMapa){ try{ gasMapa.remove(); }catch(e){} gasMapa = null; }
+    const centro = gasPos ? [gasPos.lat, gasPos.lon] : [lista[0].lat, lista[0].lon];
+    gasMapa = L.map(div, {zoomControl:false, attributionControl:true}).setView(centro, gasRadio<=10?12:10);
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+      maxZoom: 19, subdomains:'abcd',
+      attribution: '© OpenStreetMap · © CARTO'
+    }).addTo(gasMapa);
+    const t1 = barato + (caro-barato)/3, t2 = barato + 2*(caro-barato)/3;
+    const grupo = [];
+    lista.forEach((e,i)=>{
+      const p = e.p[gasCarb];
+      const cls = p<=t1 ? 'ok' : p<=t2 ? 'warn' : 'bad';
+      const m = L.marker([e.lat,e.lon], {icon: L.divIcon({
+        className:'', html:'<div class="pin '+cls+'">'+num(p,3)+'</div>',
+        iconSize:[46,20], iconAnchor:[23,10]
+      })}).addTo(gasMapa);
+      m.on('click', ()=>verGasolinera(e));
+      grupo.push([e.lat,e.lon]);
+    });
+    if(gasPos){
+      L.circleMarker([gasPos.lat,gasPos.lon], {radius:6, color:'#fff', weight:2,
+        fillColor:'#5B8FC7', fillOpacity:1}).addTo(gasMapa);
+      grupo.push([gasPos.lat,gasPos.lon]);
+    }
+    if(grupo.length>1){ try{ gasMapa.fitBounds(grupo,{padding:[28,28],maxZoom:13}); }catch(e){} }
+  });
+}
+
+function cargarLeaflet(){
+  if(window.L) return Promise.resolve(true);
+  if(window._lp) return window._lp;
+  window._lp = new Promise(res=>{
+    const css = document.createElement('link');
+    css.rel='stylesheet'; css.href='https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css';
+    document.head.appendChild(css);
+    const s = document.createElement('script');
+    s.src='https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js';
+    s.onload=()=>res(true); s.onerror=()=>res(false);
+    document.head.appendChild(s);
+  });
+  return window._lp;
+}
+
+function cargarGas(recargar){
+  gasEstado = 'cargando';
+  if(vista==='precios') pintarPrecios();
+  /* ubicacion en paralelo, sin bloquear */
+  if(!gasPos && navigator.geolocation){
+    navigator.geolocation.getCurrentPosition(
+      p => { gasPos = {lat:p.coords.latitude, lon:p.coords.longitude};
+             if(vista==='precios' && gasEstado==='ok') pintarPrecios(); },
+      () => {}, {timeout:8000, maximumAge:600000});
+  }
+  fetch('datos/gasolineras.json' + (recargar?('?t='+Date.now()):''), {cache: recargar?'reload':'default'})
+    .then(r => r.ok ? r.json() : Promise.reject(r.status))
+    .then(j => { GAS = j; gasEstado = 'ok'; if(vista==='precios') pintarPrecios(); })
+    .catch(() => { gasEstado = 'error'; if(vista==='precios') pintarPrecios(); });
+}
+
+function verGasolinera(e){
+  const filas = CARB.filter(c=>e.p[c[0]]!=null).map(c=>
+    '<div class="spec"><span class="k">'+c[1]+'</span><span class="v mono">'+num(e.p[c[0]],3)+' €/L</span></div>').join('');
+  abrir(e.r || 'Gasolinera',
+    '<div class="note" style="margin-bottom:14px">'+esc(e.d)+'<br>'+esc(e.m)+
+      (e.km!=null?' · a '+num(e.km,1)+' km':'')+(e.h?'<br>'+esc(e.h):'')+'</div>'+
+    filas+'<div class="sep"></div>'+
+    '<div class="btnrow"><button class="btn pri" id="repAqui">Repostar aquí</button></div>'+
+    '<div class="btnrow"><button class="btn gh" id="irAqui">Cómo llegar</button>'+
+    '<button class="btn gh" id="refAqui">Fijar como referencia</button></div>');
+  document.getElementById('repAqui').onclick = ()=>{
+    const est = (e.r||'') + (e.m?' ('+e.m+')':'');
+    cerrar();
+    setTimeout(()=>formRepostaje(null, {estacion:est, precioL:String(e.p[gasCarb]), fecha:hoy()}), 260);
+  };
+  document.getElementById('irAqui').onclick = ()=>{
+    window.open('https://maps.apple.com/?daddr='+e.lat+','+e.lon+'&dirflg=d','_blank');
+  };
+  document.getElementById('refAqui').onclick = ()=>{
+    DB.precioRef = String(e.p[gasCarb]); guardar(); cerrar(); render();
+    toast('Precio de referencia: '+num(e.p[gasCarb],3)+' €/L');
+  };
 }
 /* ===================== VISTA: TALLER ===================== */
 function vTaller(){
@@ -1448,7 +1642,8 @@ function importarCSV(txt){
 
 /* ===================== RENDER Y RUTAS ===================== */
 let vista = 'resumen';
-const VIEWS = {resumen:vResumen, repostajes:vRepostajes, gastos:vGastos, taller:vTaller, ficha:vFicha};
+const VIEWS = {resumen:vResumen, repostajes:vRepostajes, precios:vPrecios,
+               gastos:vGastos, taller:vTaller, ficha:vFicha};
 function render(){
   const c = coche();
   document.getElementById('plateNum').textContent = c.matricula || '0000 ---';
@@ -1459,6 +1654,16 @@ function render(){
   document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('on', b.dataset.t===vista));
   document.querySelectorAll('section.view').forEach(s=>s.classList.toggle('on', s.id==='v-'+vista));
   if(vista==='resumen') pintarTrayecto();
+  if(vista==='precios'){
+    gasMapa = null;
+    pintarPrecios();
+    const rec = document.getElementById('gasRecargar');
+    if(rec) rec.onclick = ()=>{ GAS=null; gasEstado='nada'; gasPos=null; pintarPrecios(); };
+    const rad = document.getElementById('gasRad');
+    if(rad) rad.onchange = ()=>{ gasRadio = Number(rad.value); pintarPrecios(); };
+    const ord = document.getElementById('gasOrd');
+    if(ord) ord.onchange = ()=>{ gasOrden = ord.value; pintarPrecios(); };
+  }
   if(vista==='ficha'){
     const b = document.getElementById('addDoc'); if(b) b.onclick = anadirDoc;
     pintarDocs();
@@ -1499,6 +1704,12 @@ document.addEventListener('click', e=>{
     document.querySelectorAll('[data-tema]').forEach(x=>x.classList.toggle('on',x.dataset.tema===DB.tema)); return; }
   const co = t.closest('[data-coche]'); if(co){ DB.activo = co.dataset.coche; guardar(); cerrar(); render(); return; }
   const dc = t.closest('[data-doc]'); if(dc){ verDoc(dc.dataset.doc); return; }
+  const cb = t.closest('[data-carb]');
+  if(cb){ gasCarb = cb.dataset.carb;
+    document.querySelectorAll('[data-carb]').forEach(x=>x.classList.toggle('on', x===cb));
+    pintarPrecios(); return; }
+  const gs = t.closest('[data-gas]');
+  if(gs){ const e = gasCerca()[+gs.dataset.gas]; if(e) verGasolinera(e); return; }
   const ac = t.closest('[data-accion]');
   if(ac && ac.dataset.accion==='presiones'){
     DB.mantenimientos.push({id:uid(), cid:DB.activo, tipo:'presiones', fecha:hoy(),

@@ -1,4 +1,4 @@
-const CACHE = 'garaje-v1';
+const CACHE = 'garaje-v2';
 const SHELL = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', e => {
@@ -26,7 +26,12 @@ self.addEventListener('fetch', e => {
         const copia = r.clone();
         caches.open(CACHE).then(c => c.put(req, copia));
         return r;
-      }).catch(() => caches.match(req).then(r => r || caches.match('./index.html')))
+      }).catch(() => caches.match(req).then(r => {
+        if (r) return r;
+        // solo devolvemos la app para navegaciones; para datos, error limpio
+        return req.mode === 'navigate' ? caches.match('./index.html')
+                                       : new Response('', { status: 504 });
+      }))
     );
     return;
   }
