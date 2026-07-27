@@ -75,7 +75,18 @@ h2{font-size:22px}h3{font-size:17px}
 .top .id{min-width:0;flex:1}
 .top .id .who{font-family:var(--disp);font-size:13px;color:var(--dim);letter-spacing:.06em;
   text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.odo{text-align:right;line-height:1}
+.odo{text-align:right;line-height:1;padding:2px 4px;border-radius:8px}
+.odo:hover{background:rgba(255,255,255,.04)}
+
+/* documentos */
+.docs{display:grid;grid-template-columns:repeat(3,1fr);gap:9px}
+@media(min-width:620px){.docs{grid-template-columns:repeat(5,1fr)}}
+.doc{display:block;text-align:left;border:1px solid var(--line);border-radius:var(--r2);
+  overflow:hidden;background:var(--bg2)}
+.doc img{width:100%;aspect-ratio:3/4;object-fit:cover;display:block;background:var(--panel3)}
+.doc span{display:block;padding:6px 7px;font-size:11.5px;color:var(--dim);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.doc:hover{border-color:var(--accent)}
 .odo b{font-family:var(--disp);font-size:26px;font-weight:600;font-variant-numeric:tabular-nums}
 .odo span{display:block;font-size:10px;letter-spacing:.16em;color:var(--dim2);text-transform:uppercase;font-family:var(--disp)}
 .iconbtn{width:38px;height:38px;border-radius:10px;border:1px solid var(--line);
@@ -241,7 +252,7 @@ select{-webkit-appearance:none;appearance:none;
       <span class="eu"><i>★★★<br>★★★</i>E</span><span class="n" id="plateNum">0000 XC6</span>
     </button>
     <div class="id"><div class="who" id="whoTxt">Volvo XC60</div></div>
-    <div class="odo"><b class="num" id="odoVal">—</b><span>km</span></div>
+    <button class="odo" id="odoBtn" title="Actualizar odómetro"><b class="num" id="odoVal">—</b><span>km</span></button>
     <button class="iconbtn" id="menuBtn" aria-label="Ajustes">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
     </button>
@@ -390,14 +401,22 @@ let toastT;
 function toast(m){ const t=document.getElementById('toast'); t.textContent=m; t.classList.add('on');
   clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('on'),2400); }
 
-/* km actuales: el mayor km registrado en cualquier apunte */
+/* odometro: lectura del cuadro + los km recorridos apuntados despues de esa fecha */
 function kmActual(){
-  let m = n2(coche().kmManual) || 0;
+  const c = coche();
+  const base = n2(c.kmManual), bf = c.kmManualFecha || '';
+  let m = 0;
+  if(base){
+    m = base + mios(DB.repostajes)
+      .filter(r => !bf || (r.fecha && r.fecha > bf))
+      .reduce((s,r) => s + (n2(r.trip)||0), 0);
+  }
   const push = r => { const k=n2(r.km); if(k && k>m) m=k; };
   mios(DB.repostajes).forEach(push); mios(DB.gastos).forEach(push);
   mios(DB.mantenimientos).forEach(push); mios(DB.averias).forEach(push);
   return m || null;
 }
+function odometroCalculado(){ return !!(n2(coche().kmManual)); }
 
 /* precio de referencia para estimar litros cuando solo hay importe */
 function precioRef(){ return n2(DB.precioRef) || 1.5; }
@@ -436,7 +455,22 @@ function consumos(){
       }
     } else if(r.lleno && km){ ancla = {km}; acumL = 0; acumE = 0; acumEst = false; }
   });
+  /* aviso: un repostaje que se pasa un 15% de la mediana de los 6 anteriores */
+  out.forEach((o,i)=>{
+    const prev = out.slice(Math.max(0,i-6), i).map(x=>x.l100);
+    if(prev.length >= 4){
+      const md = mediana(prev);
+      o.ref = md;
+      o.exceso = (o.l100 - md) * 100 / md;
+      o.alerta = o.exceso > 15;
+    }
+  });
   return out;
+}
+function mediana(a){
+  if(!a.length) return null;
+  const b = a.slice().sort((x,y)=>x-y), m = b.length>>1;
+  return b.length % 2 ? b[m] : (b[m-1]+b[m])/2;
 }
 
 /* km recorridos totales: por odometro si lo hay, si no sumando trayectos */
@@ -508,7 +542,7 @@ function sparkline(datos, fmt, unidad){
     d += (i?' L':'M')+x+' '+y; a += (i?' L':'M')+x+' '+y; });
   a += ' L'+X(datos.length-1).toFixed(1)+' '+(H-pb)+' L'+X(0).toFixed(1)+' '+(H-pb)+' Z';
   const avg = media(ys), ya = Y(avg).toFixed(1);
-  const pts = datos.map((p,i)=>'<circle cx="'+X(i).toFixed(1)+'" cy="'+Y(p.y).toFixed(1)+'" r="2.6" fill="var(--accent)"/>').join('');
+  const pts = datos.map((p,i)=>'<circle cx="'+X(i).toFixed(1)+'" cy="'+Y(p.y).toFixed(1)+'" r="'+(p.mal?3.6:2.6)+'" fill="'+(p.mal?'var(--bad)':'var(--accent)')+'"/>').join('');
   const ult = datos[datos.length-1];
   return '<svg class="chart" viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none" aria-hidden="true">'+
     '<defs><linearGradient id="gA" x1="0" y1="0" x2="0" y2="1">'+
@@ -546,14 +580,34 @@ function vResumen(){
   const cKm = (recorridos && recorridos>0) ? totalTodo/recorridos : null;
   const estimado = cs.length && cs.slice(-5).every(x=>x.est);
   const eur100 = pondE(cs.slice(-5));
+  /* tendencia: ultimos 6 repostajes contra los 6 anteriores */
+  const t1 = cs.length>=12 ? pondL(cs.slice(-6)) : null, t0 = cs.length>=12 ? pondL(cs.slice(-12,-6)) : null;
+  const tend = (t1 && t0) ? (t1-t0)*100/t0 : null;
+  const pieConsumo = tend!=null
+    ? (tend>0?'+':'')+num(tend,0)+'% frente a los 6 anteriores'
+    : (l100t?('Histórico '+num(l100t,1)+(estimado?' · estimado':'')):'Apunta los km recorridos');
 
   let h = '<div class="cluster">'+
-    cell('Consumo medio', l100?(estimado?'≈':'')+num(l100,1):'—','L/100 km',
-      l100t?('Histórico '+num(l100t,1)+(estimado?' · estimado':'')):'Apunta los km recorridos', true)+
+    cell('Consumo medio', l100?(estimado?'≈':'')+num(l100,1):'—','L/100 km', pieConsumo, true)+
     cell('Coste combustible', eur100?num(eur100,1):'—','€/100 km', 'de tus últimos repostajes')+
     cell('Gasto '+anio, num(gAnio+rAnio,0),'€', 'Combustible '+num(rAnio,0)+' € · Otros '+num(gAnio,0)+' €')+
     cell('Coste por km', cKm?num(cKm,3):'—','€/km', recorridos?(num(recorridos)+' km registrados'):'Apunta los km recorridos')+
   '</div>';
+
+  /* avisos */
+  const ultC = cs[cs.length-1];
+  if(ultC && ultC.alerta){
+    h += '<div class="card tight" style="border-color:rgba(224,86,60,.45)">'+
+      '<div class="row" style="padding:4px 0"><div class="ic" style="background:rgba(224,86,60,.14);color:var(--bad)">'+ico('alert')+'</div>'+
+      '<div class="main"><div class="t">El último repostaje se ha ido un '+num(ultC.exceso,0)+'%</div>'+
+      '<div class="s">'+num(ultC.l100,1)+' L/100 km frente a '+num(ultC.ref,1)+' de tus seis anteriores. '+
+      'Puede ser el tipo de trayecto, la presión de las ruedas o algo que revisar.</div></div></div></div>';
+  }
+  if(!odometroCalculado()){
+    h += '<div class="card tight"><div class="row tap" id="pedirOdo" style="padding:4px 0">'+
+      '<div class="ic">'+ico('chip')+'</div><div class="main"><div class="t">Dime los kilómetros del cuadro</div>'+
+      '<div class="s">Una sola vez. Después los sumo yo con cada repostaje y se activan los avisos por kilómetros.</div></div></div></div>';
+  }
 
   /* vencimientos */
   const ven = estadoPlan().filter(p=>p.pc!=null).sort((a,b)=>{
@@ -582,7 +636,7 @@ function vResumen(){
   /* grafica de consumo */
   if(cs.length>1){
     h += '<div class="card"><div class="hd"><h3>Consumo</h3><span class="eyebrow">L / 100 km</span></div>'+
-      sparkline(cs.slice(-14).map(x=>({x:fCorta(x.fecha), y:x.l100})))+
+      sparkline(cs.slice(-14).map(x=>({x:fCorta(x.fecha), y:x.l100, mal:x.alerta})))+
       '<div class="note" style="margin-top:6px">De los km recorridos de cada repostaje, o entre depósitos llenos si no los apuntas. '+
       'La línea de puntos es tu media.'+(estimado?' Los litros van estimados a '+num(precioRef(),2)+' €/L.':'')+'</div></div>';
   }
@@ -650,7 +704,7 @@ function vRepostajes(){
     cell('Peor', peor?num(peor,1):'—','L/100','consumo más alto')+'</div>';
 
   if(cs.length>1) h += '<div class="card"><div class="hd"><h3>Evolución</h3><span class="eyebrow">L / 100 km</span></div>'+
-    sparkline(cs.slice(-14).map(x=>({x:fCorta(x.fecha),y:x.l100})))+'</div>';
+    sparkline(cs.slice(-14).map(x=>({x:fCorta(x.fecha),y:x.l100,mal:x.alerta})))+'</div>';
 
   h += '<div class="card">';
   let anioAct = '';
@@ -669,7 +723,7 @@ function vRepostajes(){
       '<div class="main"><div class="t">'+tit+(r.lleno?'':' <span class="dim" style="font-size:12px">(parcial)</span>')+'</div>'+
       '<div class="s">'+det+'</div></div>'+
       '<div class="amt">'+eur(n2(r.total))+
-      (c?'<em>'+(c.est?'≈':'')+num(c.l100,1)+' L/100</em>':'')+'</div></div>';
+      (c?'<em'+(c.alerta?' style="color:var(--bad)"':'')+'>'+(c.est?'≈':'')+num(c.l100,1)+' L/100</em>':'')+'</div></div>';
   });
   h += '</div>';
   return h;
@@ -813,6 +867,9 @@ function vFicha(){
     '<span class="n">'+esc(c.matricula||'0000 ---')+'</span></div>'+
     '<div class="note" style="margin-top:12px">'+esc([c.motor,c.cv?c.cv+' CV':'',c.cambio,c.anio].filter(Boolean).join(' · '))+'</div>'+
   '</div>';
+  h += '<div class="card"><div class="hd"><h3>Documentos</h3>'+
+       '<button class="act" id="addDoc">Añadir foto</button></div>'+
+       '<div id="docsGrid"><div class="note">Cargando…</div></div></div>';
   h += '<div class="card"><div class="hd"><h3>Presiones</h3><span class="eyebrow">bar en frío</span></div>'+tyres(c)+'</div>';
   FICHA.forEach((gr,i)=>{
     h += '<div class="card"><div class="hd"><h3>'+esc(gr.g)+'</h3>'+
@@ -873,8 +930,9 @@ function wire(guardarFn, borrarFn){
 }
 
 /* --- repostaje --- */
-function formRepostaje(id){
-  const r = id ? DB.repostajes.find(x=>x.id===id) : {fecha:hoy(), lleno:true};
+function formRepostaje(id, pre){
+  const r = id ? DB.repostajes.find(x=>x.id===id)
+              : Object.assign({fecha:hoy(), lleno:true}, pre||{});
   abrir(id?'Repostaje':'Nuevo repostaje',
     '<div class="grid2">'+campo('fecha','Fecha','date',r.fecha)+
     campo('total','Importe (€)','number',r.total)+'</div>'+
@@ -902,8 +960,9 @@ function formRepostaje(id){
 }
 
 /* --- gasto --- */
-function formGasto(id){
-  const g = id ? DB.gastos.find(x=>x.id===id) : {fecha:hoy(), cat:'revision'};
+function formGasto(id, pre){
+  const g = id ? DB.gastos.find(x=>x.id===id)
+              : Object.assign({fecha:hoy(), cat:'revision'}, pre||{});
   abrir(id?'Gasto':'Nuevo gasto',
     campo('cat','Categoría','select',g.cat,CATS.map(c=>[c.k,c.n]))+
     campo('concepto','Concepto','text',g.concepto,'Cambio de pastillas delanteras')+
@@ -924,7 +983,8 @@ function formGasto(id){
 
 /* --- mantenimiento --- */
 function formMant(id, tipoPre){
-  const m = id ? DB.mantenimientos.find(x=>x.id===id) : {fecha:hoy(), tipo:tipoPre||'aceite'};
+  const m = id ? DB.mantenimientos.find(x=>x.id===id)
+              : {fecha:hoy(), tipo:tipoPre||'aceite', km: kmActual()||''};
   abrir(id?'Mantenimiento':'Nuevo mantenimiento',
     campo('tipo','Qué se ha hecho','select',m.tipo,plan().map(p=>[p.id,p.n]).concat([['otro','Otro']]))+
     campo('concepto','Detalle','text',m.concepto,'Aceite Castrol 0W-30 + filtro')+
@@ -972,6 +1032,149 @@ function formAveria(id){
     if(id) DB.averias[DB.averias.findIndex(x=>x.id===id)] = obj; else DB.averias.push(obj);
     guardar(); cerrar(); render(); toast('Guardado');
   }, ()=>{ DB.averias = DB.averias.filter(x=>x.id!==id); guardar(); cerrar(); render(); toast('Eliminado'); });
+}
+
+/* --- odometro --- */
+function formOdometro(){
+  const c = coche(), km = kmActual();
+  const sumados = n2(c.kmManual) && km ? km - n2(c.kmManual) : 0;
+  abrir('Odómetro',
+    campo('kmManual','Lectura del cuadro (km)','number',c.kmManual,'187400')+
+    campo('kmManualFecha','Leída el','date',c.kmManualFecha||hoy())+
+    '<div class="note" style="margin-bottom:14px">Con esto basta. A partir de esa fecha voy sumando los km recorridos '+
+    'que apuntes en cada repostaje, así que no tienes que volver a mirar el cuadro.'+
+    (sumados>0?' Ahora mismo llevo '+num(sumados)+' km sumados.':'')+'</div>'+
+    acciones(null));
+  wire(()=>{
+    const d = leer();
+    coche().kmManual = d.kmManual; coche().kmManualFecha = d.kmManualFecha;
+    guardar(); cerrar(); render(); toast('Odómetro actualizado');
+  });
+}
+
+/* --- enlaces para Atajos de iOS --- */
+function deepLink(){
+  const h = location.hash.replace(/^#/,'');
+  if(!h) return;
+  const p = {};
+  h.split('&').forEach(kv=>{ const i = kv.indexOf('=');
+    if(i>0) p[decodeURIComponent(kv.slice(0,i))] = decodeURIComponent(kv.slice(i+1).replace(/\+/g,' ')); });
+  history.replaceState(null,'',location.pathname+location.search);
+  const pre = {};
+  ['total','trip','litros','precioL','km','estacion','importe','cat','concepto','fecha','notas']
+    .forEach(k=>{ if(p[k]) pre[k] = p[k]; });
+  if(!pre.fecha) pre.fecha = hoy();
+  if(p.nuevo==='rep' || p.nuevo==='repostaje'){ ir('repostajes'); setTimeout(()=>formRepostaje(null,pre),80); }
+  else if(p.nuevo==='gasto'){ ir('gastos'); setTimeout(()=>formGasto(null,pre),80); }
+}
+
+/* --- fotos de documentos (IndexedDB) --- */
+const TIPOS_DOC = [['ficha','Ficha técnica'],['permiso','Permiso de circulación'],['itv','Tarjeta ITV'],
+  ['seguro','Seguro'],['factura','Factura'],['otro','Otro']];
+let _idb = null, _urls = [];
+function idb(){
+  return new Promise((res,rej)=>{
+    if(_idb) return res(_idb);
+    if(!('indexedDB' in window)) return rej(new Error('sin indexedDB'));
+    const q = indexedDB.open('garaje-docs',1);
+    q.onupgradeneeded = ()=>{ const d=q.result;
+      if(!d.objectStoreNames.contains('docs')) d.createObjectStore('docs',{keyPath:'id'}); };
+    q.onsuccess = ()=>{ _idb=q.result; res(_idb); };
+    q.onerror = ()=>rej(q.error);
+  });
+}
+function docsTodos(){
+  return idb().then(d=>new Promise((res,rej)=>{
+    const t = d.transaction('docs','readonly'), r = t.objectStore('docs').getAll();
+    r.onsuccess = ()=>res((r.result||[]).filter(x=>x.cid===DB.activo).sort((a,b)=>a.fecha<b.fecha?1:-1));
+    r.onerror = ()=>rej(r.error);
+  }));
+}
+function docGuardar(o){
+  return idb().then(d=>new Promise((res,rej)=>{
+    const t = d.transaction('docs','readwrite'); t.objectStore('docs').put(o);
+    t.oncomplete = ()=>res(); t.onerror = ()=>rej(t.error);
+  }));
+}
+function docBorrar(id){
+  return idb().then(d=>new Promise((res,rej)=>{
+    const t = d.transaction('docs','readwrite'); t.objectStore('docs').delete(id);
+    t.oncomplete = ()=>res(); t.onerror = ()=>rej(t.error);
+  }));
+}
+/* reduce la foto antes de guardarla: 1600 px de lado mayor */
+function comprimir(file){
+  return new Promise((res,rej)=>{
+    const fr = new FileReader();
+    fr.onload = ()=>{
+      const img = new Image();
+      img.onload = ()=>{
+        const s = Math.min(1, 1600/Math.max(img.width,img.height));
+        const cv = document.createElement('canvas');
+        cv.width = Math.round(img.width*s); cv.height = Math.round(img.height*s);
+        cv.getContext('2d').drawImage(img,0,0,cv.width,cv.height);
+        cv.toBlob(b=> b?res(b):rej(new Error('sin blob')), 'image/jpeg', 0.82);
+      };
+      img.onerror = ()=>rej(new Error('no es una imagen'));
+      img.src = fr.result;
+    };
+    fr.onerror = ()=>rej(fr.error);
+    fr.readAsDataURL(file);
+  });
+}
+function pintarDocs(){
+  const cont = document.getElementById('docsGrid');
+  if(!cont) return;
+  _urls.forEach(u=>URL.revokeObjectURL(u)); _urls = [];
+  docsTodos().then(ds=>{
+    if(!ds.length){ cont.innerHTML = '<div class="note">Ficha técnica, permiso de circulación, tarjeta de la ITV, '+
+      'facturas del taller. Se quedan en el móvil, no se suben a ningún sitio.</div>'; return; }
+    cont.innerHTML = '<div class="docs">'+ds.map(d=>{
+      const u = URL.createObjectURL(d.blob); _urls.push(u);
+      const t = (TIPOS_DOC.find(x=>x[0]===d.tipo)||['','Otro'])[1];
+      return '<button class="doc" data-doc="'+d.id+'"><img src="'+u+'" alt="'+esc(d.titulo||t)+'" loading="lazy">'+
+        '<span>'+esc(d.titulo||t)+'</span></button>';
+    }).join('')+'</div>';
+  }).catch(()=>{ cont.innerHTML = '<div class="note">Este navegador no deja guardar fotos.</div>'; });
+}
+function anadirDoc(){
+  const inp = document.createElement('input');
+  inp.type='file'; inp.accept='image/*';
+  inp.onchange = ()=>{
+    const f = inp.files[0]; if(!f) return;
+    toast('Procesando la foto…');
+    comprimir(f).then(blob=>{
+      const id = uid();
+      return docGuardar({id, cid:DB.activo, tipo:'otro', titulo:'', fecha:hoy(), blob, tam:blob.size})
+        .then(()=>{ pintarDocs(); setTimeout(()=>verDoc(id),150); });
+    }).catch(()=>toast('No he podido leer esa imagen'));
+  };
+  inp.click();
+}
+function verDoc(id){
+  docsTodos().then(ds=>{
+    const d = ds.find(x=>x.id===id); if(!d) return;
+    const u = URL.createObjectURL(d.blob); _urls.push(u);
+    abrir('Documento',
+      '<img src="'+u+'" alt="" style="width:100%;border-radius:10px;border:1px solid var(--line);margin-bottom:14px">'+
+      campo('tipo','Qué es','select',d.tipo,TIPOS_DOC)+
+      campo('titulo','Nombre','text',d.titulo,'Factura embrague')+
+      campo('fecha','Fecha','date',d.fecha)+
+      '<div class="note" style="margin-bottom:12px">'+Math.round(d.tam/1024)+' KB. '+
+      'Las fotos no entran en la copia de seguridad: si cambias de móvil, descárgatelas antes.</div>'+
+      '<div class="btnrow"><button class="btn pri" id="okBtn">Guardar</button></div>'+
+      '<div class="btnrow"><button class="btn gh" id="bajaBtn">Descargar</button>'+
+      '<button class="btn dan" id="delBtn">Eliminar</button></div>');
+    document.getElementById('bajaBtn').onclick = ()=>{
+      const a = document.createElement('a'); a.href=u;
+      a.download = (d.titulo||d.tipo||'documento')+'.jpg'; a.click();
+    };
+    wire(()=>{
+      const v = leer();
+      docGuardar(Object.assign({}, d, {tipo:v.tipo, titulo:v.titulo, fecha:v.fecha}))
+        .then(()=>{ cerrar(); pintarDocs(); toast('Guardado'); });
+    }, ()=>{ docBorrar(id).then(()=>{ cerrar(); pintarDocs(); toast('Eliminado'); }); });
+  });
 }
 
 /* --- editar grupo de la ficha --- */
@@ -1022,6 +1225,9 @@ function verPlan(pid){
 }
 
 /* ===================== AJUSTES ===================== */
+function enlaceEjemplo(){
+  return location.origin + location.pathname + '#nuevo=rep&total=80,91&trip=646';
+}
 function menu(){
   const c = coche();
   let h = '<div class="eyebrow" style="margin-bottom:8px">Coches</div>';
@@ -1035,6 +1241,16 @@ function menu(){
   h += '<div class="sep"></div><div class="eyebrow" style="margin-bottom:8px">Color del cuadro</div>'+
     '<div class="chips">'+[['amber','Elegance'],['eco','Eco'],['perf','Performance'],['blue','Nórdico']]
       .map(t=>'<button class="chip'+(DB.tema===t[0]?' on':'')+'" data-tema="'+t[0]+'">'+t[1]+'</button>').join('')+'</div>';
+  h += '<div class="sep"></div><div class="eyebrow" style="margin-bottom:8px">Atajos de iOS</div>'+
+    '<div class="note" style="margin-bottom:10px">Abre la app con el repostaje ya escrito. En Atajos: acción '+
+    '<b>Abrir URL</b> con este enlace, cambiando los números por variables de <b>Pedir entrada</b>. '+
+    'Pégalo también en un tag NFC de la tapa del depósito.</div>'+
+    '<div style="background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px 12px;'+
+    'font-family:ui-monospace,monospace;font-size:12px;word-break:break-all;margin-bottom:10px" id="urlEj">'+
+    esc(enlaceEjemplo())+'</div>'+
+    '<div class="btnrow"><button class="btn gh" id="copyBtn">Copiar enlace</button></div>'+
+    '<div class="note" style="margin-top:8px">Parámetros: <b>total</b>, <b>trip</b>, <b>litros</b>, <b>precioL</b>, '+
+    '<b>km</b>, <b>estacion</b>. Para un gasto: <b>nuevo=gasto</b> con <b>importe</b>, <b>cat</b> y <b>concepto</b>.</div>';
   h += '<div class="sep"></div><div class="eyebrow" style="margin-bottom:8px">Precio de referencia</div>'+
     campo('precioRef','€ por litro','number',DB.precioRef||'1.50')+
     '<div class="note" style="margin:-6px 0 10px">Se usa para estimar los litros de los repostajes en los que solo apuntas el importe.</div>'+
@@ -1058,6 +1274,11 @@ function menu(){
     ['repostajes','gastos','mantenimientos','averias'].forEach(k=>DB[k]=DB[k].filter(r=>r.cid!==c.id));
     DB.coches = DB.coches.filter(x=>x.id!==c.id); DB.activo = DB.coches[0].id;
     guardar(); cerrar(); render(); toast('Coche eliminado');
+  };
+  document.getElementById('copyBtn').onclick = ()=>{
+    const txt = enlaceEjemplo();
+    if(navigator.clipboard) navigator.clipboard.writeText(txt).then(()=>toast('Enlace copiado')).catch(()=>toast('Cópialo a mano'));
+    else toast('Cópialo a mano');
   };
   document.getElementById('refBtn').onclick = ()=>{
     const v = document.querySelector('#sheetBody [data-k="precioRef"]').value.trim();
@@ -1130,6 +1351,10 @@ function render(){
   document.getElementById('v-'+vista).innerHTML = VIEWS[vista]();
   document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('on', b.dataset.t===vista));
   document.querySelectorAll('section.view').forEach(s=>s.classList.toggle('on', s.id==='v-'+vista));
+  if(vista==='ficha'){
+    const b = document.getElementById('addDoc'); if(b) b.onclick = anadirDoc;
+    pintarDocs();
+  }
   window.scrollTo({top:0,behavior:'instant'});
 }
 function ir(v){ vista = v; render(); }
@@ -1146,6 +1371,7 @@ document.getElementById('fab').onclick = ()=>{
 };
 document.getElementById('menuBtn').onclick = menu;
 document.getElementById('plateBtn').onclick = menu;
+document.getElementById('odoBtn').onclick = formOdometro;
 
 document.addEventListener('click', e=>{
   const t = e.target;
@@ -1164,11 +1390,14 @@ document.addEventListener('click', e=>{
   const tm = t.closest('[data-tema]'); if(tm){ DB.tema = tm.dataset.tema; guardar(); aplicarTema();
     document.querySelectorAll('[data-tema]').forEach(x=>x.classList.toggle('on',x.dataset.tema===DB.tema)); return; }
   const co = t.closest('[data-coche]'); if(co){ DB.activo = co.dataset.coche; guardar(); cerrar(); render(); return; }
+  const dc = t.closest('[data-doc]'); if(dc){ verDoc(dc.dataset.doc); return; }
+  if(t.closest('#pedirOdo')){ formOdometro(); return; }
   if(t.id==='editPlan'){ formPlan(); return; }
 });
+window.addEventListener('hashchange', deepLink);
 document.addEventListener('keydown', e=>{ if(e.key==='Escape') cerrar(); });
 
-aplicarTema(); render();
+aplicarTema(); render(); deepLink();
 if('serviceWorker' in navigator) window.addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
 </script>
 </body>
