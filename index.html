@@ -319,7 +319,7 @@ select{-webkit-appearance:none;appearance:none;
 <div class="toast" id="toast"></div>
 <script>
 /* ===================== ESTADO ===================== */
-const VERSION = '8 · 27/07/2026';
+const VERSION = '9 · 27/07/2026';
 const KEY = 'garaje.v1';
 const hoy = () => new Date().toISOString().slice(0,10);
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,7);
@@ -1512,7 +1512,7 @@ function menu(){
   h += '<div class="btnrow"><button class="btn gh" id="addCoche">Añadir coche</button></div>';
   h += '<div class="sep"></div><div class="eyebrow" style="margin-bottom:8px">Color del cuadro</div>'+
     '<div class="chips">'+[['amber','Elegance'],['eco','Eco'],['perf','Performance'],['blue','Nórdico']]
-      .map(t=>'<button class="chip'+(DB.tema===t[0]?' on':'')+'" data-tema="'+t[0]+'">'+t[1]+'</button>').join('')+'</div>';
+      .map(t=>'<button class="chip'+(DB.tema===t[0]?' on':'')+'" data-fijartema="'+t[0]+'">'+t[1]+'</button>').join('')+'</div>';
   h += '<div class="sep"></div><div class="eyebrow" style="margin-bottom:8px">Atajos de iOS</div>'+
     '<div class="note" style="margin-bottom:10px">Abre la app con el repostaje ya escrito. En Atajos: acción '+
     '<b>Abrir URL</b> con este enlace, cambiando los números por variables de <b>Pedir entrada</b>. '+
@@ -1702,6 +1702,9 @@ document.getElementById('odoBtn').onclick = formOdometro;
 
 document.addEventListener('click', e=>{
   const t = e.target;
+  /* nada de buscar atributos en html o body: son ancestros de todo
+     y se tragarian cualquier clic de la app */
+  if(t === document.documentElement || t === document.body) return;
   const nuevo = t.closest('[data-nuevo]');
   if(nuevo){ const k=nuevo.dataset.nuevo;
     if(k==='rep') formRepostaje(); else if(k==='gasto') formGasto();
@@ -1714,8 +1717,10 @@ document.addEventListener('click', e=>{
   const pl = t.closest('[data-plan]'); if(pl){ verPlan(pl.dataset.plan); return; }
   const go = t.closest('[data-go]'); if(go){ ir(go.dataset.go); return; }
   const an = t.closest('[data-anio]'); if(an){ filtroAnio = an.dataset.anio; render(); return; }
-  const tm = t.closest('[data-tema]'); if(tm){ DB.tema = tm.dataset.tema; guardar(); aplicarTema();
-    document.querySelectorAll('[data-tema]').forEach(x=>x.classList.toggle('on',x.dataset.tema===DB.tema)); return; }
+  const tm = t.closest('[data-fijartema]');
+  if(tm){ DB.tema = tm.dataset.fijartema; guardar(); aplicarTema();
+    document.querySelectorAll('[data-fijartema]').forEach(x=>x.classList.toggle('on', x.dataset.fijartema===DB.tema));
+    return; }
   const co = t.closest('[data-coche]'); if(co){ DB.activo = co.dataset.coche; guardar(); cerrar(); render(); return; }
   const dc = t.closest('[data-doc]'); if(dc){ verDoc(dc.dataset.doc); return; }
   const cb = t.closest('[data-carb]');
