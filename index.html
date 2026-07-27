@@ -26,6 +26,7 @@
   --disp:"Barlow Condensed","Oswald","Helvetica Neue",system-ui,sans-serif;
   --body:"Barlow","Helvetica Neue",system-ui,-apple-system,sans-serif;
   --safe-b:env(safe-area-inset-bottom,0px);
+  --safe-t:env(safe-area-inset-top,0px);
 }
 [data-tema="eco"]{--accent:var(--eco);--accent-soft:rgba(121,192,141,.14)}
 [data-tema="perf"]{--accent:var(--perf);--accent-soft:rgba(224,86,60,.14)}
@@ -68,7 +69,8 @@ h2{font-size:22px}h3{font-size:17px}
 /* ---------- layout ---------- */
 .top{position:sticky;top:0;z-index:40;background:rgba(21,24,27,.92);
   backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
-  border-bottom:1px solid var(--line);padding:10px 16px calc(10px) 16px}
+  border-bottom:1px solid var(--line);
+  padding:calc(10px + var(--safe-t)) 16px 10px 16px}
 .top-in{display:flex;align-items:center;gap:12px;max-width:1080px;margin:0 auto}
 .top .id{min-width:0;flex:1}
 .top .id .who{font-family:var(--disp);font-size:13px;color:var(--dim);letter-spacing:.06em;
@@ -76,7 +78,7 @@ h2{font-size:22px}h3{font-size:17px}
 .odo{text-align:right;line-height:1}
 .odo b{font-family:var(--disp);font-size:26px;font-weight:600;font-variant-numeric:tabular-nums}
 .odo span{display:block;font-size:10px;letter-spacing:.16em;color:var(--dim2);text-transform:uppercase;font-family:var(--disp)}
-.iconbtn{width:34px;height:34px;border-radius:9px;border:1px solid var(--line);
+.iconbtn{width:38px;height:38px;border-radius:10px;border:1px solid var(--line);
   display:grid;place-items:center;color:var(--dim);background:var(--panel)}
 .iconbtn:hover{color:var(--txt);border-color:var(--line2)}
 .iconbtn svg{width:17px;height:17px}
@@ -315,7 +317,7 @@ const COCHE_NUEVO = () => ({
   kmManual:'', kmManualFecha:''
 });
 
-const DEF = () => ({ v:1, tema:'amber', coches:[COCHE_NUEVO()], activo:null,
+const DEF = () => ({ v:1, tema:'amber', precioRef:'1.50', coches:[COCHE_NUEVO()], activo:null,
   repostajes:[], gastos:[], mantenimientos:[], averias:[], plan:null });
 
 let DB = cargar();
@@ -397,27 +399,59 @@ function kmActual(){
   return m || null;
 }
 
-/* consumos: solo entre depositos llenos consecutivos */
+/* precio de referencia para estimar litros cuando solo hay importe */
+function precioRef(){ return n2(DB.precioRef) || 1.5; }
+
+/* litros de un repostaje: los apuntados, o estimados desde el importe */
+function litrosDe(r){
+  const l = n2(r.litros);
+  if(l) return {l, est:false};
+  const t = n2(r.total), p = n2(r.precioL);
+  if(t && p) return {l:t/p, est:false};
+  if(t) return {l:t/precioRef(), est:true};
+  return {l:null, est:false};
+}
+
+/* consumo: por km recorridos si los hay, si no entre depositos llenos */
 function consumos(){
   const rs = mios(DB.repostajes).slice().sort((a,b)=> (a.fecha+a.id) < (b.fecha+b.id) ? -1 : 1);
   const out = [];
-  let ancla = null, litros = 0;
+  let ancla = null, acumL = 0, acumE = 0, acumEst = false;
   rs.forEach(r=>{
-    const km = n2(r.km), l = n2(r.litros);
-    if(ancla && km && ancla.km && km > ancla.km){
-      const acum = litros + (l||0);
+    const km = n2(r.km), trip = n2(r.trip), L = litrosDe(r), tot = n2(r.total) || 0;
+    if(trip && L.l){
+      out.push({id:r.id, fecha:r.fecha, km, dist:trip, litros:L.l, coste:tot,
+        l100: L.l*100/trip, eur100: tot ? tot*100/trip : null, est:L.est});
+      if(km) ancla = {km};
+      acumL = 0; acumE = 0; acumEst = false;
+      return;
+    }
+    if(ancla && km && km > ancla.km){
+      acumL += L.l || 0; acumE += tot; acumEst = acumEst || L.est;
       if(r.lleno){
         const d = km - ancla.km;
-        out.push({ id:r.id, fecha:r.fecha, km, dist:d,
-          l100: acum*100/d, kml: d/acum, litros:acum,
-          eur100: (acum*100/d) * (n2(r.precioL)|| (n2(r.total)/(l||1)) || 0) });
-        ancla = {km}; litros = 0;
-      } else { litros = acum; }
-    } else if(r.lleno && km){ ancla = {km}; litros = 0; }
+        out.push({id:r.id, fecha:r.fecha, km, dist:d, litros:acumL, coste:acumE,
+          l100: acumL*100/d, eur100: acumE ? acumE*100/d : null, est:acumEst});
+        ancla = {km}; acumL = 0; acumE = 0; acumEst = false;
+      }
+    } else if(r.lleno && km){ ancla = {km}; acumL = 0; acumE = 0; acumEst = false; }
   });
   return out;
 }
+
+/* km recorridos totales: por odometro si lo hay, si no sumando trayectos */
+function kmRecorridos(){
+  const km = kmActual(), kc = n2(coche().kmCompra);
+  if(km && kc!=null && km > kc) return km - kc;
+  const t = mios(DB.repostajes).reduce((s,r)=> s + (n2(r.trip)||0), 0);
+  return t || null;
+}
 function media(a){ return a.length ? a.reduce((s,x)=>s+x,0)/a.length : null; }
+/* medias reales: litros totales entre km totales, no promedio de promedios */
+function pondL(cs){ const d = cs.reduce((s,x)=>s+x.dist,0), l = cs.reduce((s,x)=>s+x.litros,0);
+  return d ? l*100/d : null; }
+function pondE(cs){ const d = cs.reduce((s,x)=>s+x.dist,0), e = cs.reduce((s,x)=>s+(x.coste||0),0);
+  return (d && e) ? e*100/d : null; }
 
 /* estado de cada punto del plan de mantenimiento */
 function estadoPlan(){
@@ -502,24 +536,23 @@ function barras(items){
 /* ===================== VISTA: CUADRO ===================== */
 function vResumen(){
   const c = coche(), km = kmActual(), cs = consumos();
-  const ult5 = cs.slice(-5).map(x=>x.l100), l100 = media(ult5), l100t = media(cs.map(x=>x.l100));
+  const l100 = pondL(cs.slice(-5)), l100t = pondL(cs);
   const anio = new Date().getFullYear();
   const gAnio = mios(DB.gastos).filter(g=>g.fecha.startsWith(anio)).reduce((s,g)=>s+(n2(g.importe)||0),0);
   const rAnio = mios(DB.repostajes).filter(g=>g.fecha.startsWith(anio)).reduce((s,g)=>s+(n2(g.total)||0),0);
   const totalTodo = mios(DB.gastos).reduce((s,g)=>s+(n2(g.importe)||0),0)
                   + mios(DB.repostajes).reduce((s,g)=>s+(n2(g.total)||0),0);
-  const kmc = n2(c.kmCompra);
-  const recorridos = (km && kmc!=null) ? km-kmc : null;
+  const recorridos = kmRecorridos();
   const cKm = (recorridos && recorridos>0) ? totalTodo/recorridos : null;
-  const precioL = (()=>{ const r = mios(DB.repostajes).filter(r=>n2(r.precioL)).slice(-1)[0];
-                         return r ? n2(r.precioL) : null; })();
-  const eur100 = (l100 && precioL) ? l100*precioL : null;
+  const estimado = cs.length && cs.slice(-5).every(x=>x.est);
+  const eur100 = pondE(cs.slice(-5));
 
   let h = '<div class="cluster">'+
-    cell('Consumo medio', l100?num(l100,1):'—','L/100 km', l100t?('Histórico '+num(l100t,1)):'Marca depósito lleno', true)+
-    cell('Coste combustible', eur100?num(eur100,1):'—','€/100 km', precioL?('Último '+num(precioL,3)+' €/L'):'Anota el €/L')+
+    cell('Consumo medio', l100?(estimado?'≈':'')+num(l100,1):'—','L/100 km',
+      l100t?('Histórico '+num(l100t,1)+(estimado?' · estimado':'')):'Apunta los km recorridos', true)+
+    cell('Coste combustible', eur100?num(eur100,1):'—','€/100 km', 'de tus últimos repostajes')+
     cell('Gasto '+anio, num(gAnio+rAnio,0),'€', 'Combustible '+num(rAnio,0)+' € · Otros '+num(gAnio,0)+' €')+
-    cell('Coste por km', cKm?num(cKm,3):'—','€/km', recorridos?(num(recorridos)+' km desde la compra'):'Rellena km de compra en Ficha')+
+    cell('Coste por km', cKm?num(cKm,3):'—','€/km', recorridos?(num(recorridos)+' km registrados'):'Apunta los km recorridos')+
   '</div>';
 
   /* vencimientos */
@@ -550,7 +583,8 @@ function vResumen(){
   if(cs.length>1){
     h += '<div class="card"><div class="hd"><h3>Consumo</h3><span class="eyebrow">L / 100 km</span></div>'+
       sparkline(cs.slice(-14).map(x=>({x:fCorta(x.fecha), y:x.l100})))+
-      '<div class="note" style="margin-top:6px">Calculado entre depósitos llenos. La línea de puntos es tu media.</div></div>';
+      '<div class="note" style="margin-top:6px">De los km recorridos de cada repostaje, o entre depósitos llenos si no los apuntas. '+
+      'La línea de puntos es tu media.'+(estimado?' Los litros van estimados a '+num(precioRef(),2)+' €/L.':'')+'</div></div>';
   }
 
   /* presiones */
@@ -559,7 +593,9 @@ function vResumen(){
   /* ultimos movimientos */
   const movs = []
     .concat(mios(DB.repostajes).map(r=>({f:r.fecha,t:'Repostaje'+(r.estacion?' · '+r.estacion:''),
-      s:(n2(r.litros)?num(n2(r.litros),2)+' L':'')+(r.km?' · '+num(n2(r.km))+' km':''),v:n2(r.total),i:'fuel',tipo:'rep',id:r.id})))
+      s:[n2(r.litros)?num(n2(r.litros),2)+' L':'', n2(r.trip)?num(n2(r.trip))+' km recorridos':'',
+         n2(r.km)?num(n2(r.km))+' km':''].filter(Boolean).join(' · '),
+      v:n2(r.total),i:'fuel',tipo:'rep',id:r.id})))
     .concat(mios(DB.gastos).map(g=>({f:g.fecha,t:g.concepto||catN(g.cat),s:catN(g.cat),v:n2(g.importe),
       i:(CATS.find(c=>c.k===g.cat)||{i:'square'}).i,tipo:'gasto',id:g.id})))
     .concat(mios(DB.mantenimientos).map(m=>({f:m.fecha,t:m.concepto||nombrePlan(m.tipo),s:'Taller'+(m.taller?' · '+m.taller:''),
@@ -598,17 +634,18 @@ function vRepostajes(){
   const rs = mios(DB.repostajes).sort((a,b)=> a.fecha<b.fecha?1:-1);
   const cs = consumos();
   if(!rs.length) return blank('Aún no hay repostajes',
-    'Apunta fecha, kilómetros y litros. Con dos depósitos llenos seguidos ya te calculo el consumo real.',
+    'Con la fecha, el importe y los km recorridos ya te saco el consumo. Los litros son opcionales.',
     'rep','Añadir repostaje');
-  const litros = rs.reduce((s,r)=>s+(n2(r.litros)||0),0);
+  const litros = rs.reduce((s,r)=>s+(litrosDe(r).l||0),0);
   const gasto = rs.reduce((s,r)=>s+(n2(r.total)||0),0);
   const mejor = cs.length?Math.min.apply(null,cs.map(x=>x.l100)):null;
   const peor  = cs.length?Math.max.apply(null,cs.map(x=>x.l100)):null;
   const mapC = {}; cs.forEach(x=>mapC[x.id]=x);
 
+  const recor = rs.reduce((s,r)=>s+(n2(r.trip)||0),0);
   let h = '<div class="cluster">'+
     cell('Repostajes', rs.length,'','Desde '+fFecha(rs[rs.length-1].fecha))+
-    cell('Litros', num(litros,0),'L', eur(gasto,0)+' en total')+
+    cell(recor?'Recorridos':'Litros', recor?num(recor,0):num(litros,0), recor?'km':'L', eur(gasto,0)+' en total')+
     cell('Mejor', mejor?num(mejor,1):'—','L/100', 'consumo más bajo', true)+
     cell('Peor', peor?num(peor,1):'—','L/100','consumo más alto')+'</div>';
 
@@ -621,13 +658,18 @@ function vRepostajes(){
     const a = r.fecha.slice(0,4);
     if(a!==anioAct){ anioAct=a; h+='<div class="eyebrow" style="margin:14px 0 4px">'+a+'</div>'; }
     const c = mapC[r.id];
+    const tit = n2(r.litros) ? num(n2(r.litros),2)+' L'
+              : n2(r.trip) ? num(n2(r.trip))+' km recorridos'
+              : 'Repostaje';
+    const det = [fFecha(r.fecha),
+      n2(r.km)?num(n2(r.km))+' km':'',
+      n2(r.precioL)?num(n2(r.precioL),3)+' €/L':'',
+      r.estacion?esc(r.estacion):''].filter(Boolean).join(' · ');
     h += '<div class="row tap" data-edit="rep" data-id="'+r.id+'"><div class="ic">'+ico('fuel')+'</div>'+
-      '<div class="main"><div class="t">'+num(n2(r.litros),2)+' L'+(r.lleno?'':' <span class="dim" style="font-size:12px">(parcial)</span>')+
-      (r.estacion?' <span class="dim" style="font-size:13px">· '+esc(r.estacion)+'</span>':'')+'</div>'+
-      '<div class="s">'+fFecha(r.fecha)+' · '+(r.km?num(n2(r.km))+' km':'sin km')+
-      (n2(r.precioL)?' · '+num(n2(r.precioL),3)+' €/L':'')+'</div></div>'+
+      '<div class="main"><div class="t">'+tit+(r.lleno?'':' <span class="dim" style="font-size:12px">(parcial)</span>')+'</div>'+
+      '<div class="s">'+det+'</div></div>'+
       '<div class="amt">'+eur(n2(r.total))+
-      (c?'<em>'+num(c.l100,1)+' L/100</em>':'')+'</div></div>';
+      (c?'<em>'+(c.est?'≈':'')+num(c.l100,1)+' L/100</em>':'')+'</div></div>';
   });
   h += '</div>';
   return h;
@@ -687,7 +729,8 @@ function vTaller(){
   st.forEach(p=>{
     const sinDatos = p.pc==null;
     let s;
-    if(sinDatos) s = 'Sin registrar. '+(p.km?num(p.km)+' km':'')+(p.km&&p.meses?' o ':'')+(p.meses?p.meses+' meses':'');
+    if(sinDatos) s = p.uf ? ('Último: '+fFecha(p.uf)+' · falta el intervalo o los km')
+      : ('Sin registrar. '+(p.km?num(p.km)+' km':'')+(p.km&&p.meses?' o ':'')+(p.meses?p.meses+' meses':''));
     else{
       const t=[];
       if(p.proxKm) t.push('toca a '+num(p.proxKm)+' km'+(p.dKm!=null?' ('+(p.dKm<0?'-':'')+num(Math.abs(p.dKm))+' km)':''));
@@ -833,24 +876,26 @@ function wire(guardarFn, borrarFn){
 function formRepostaje(id){
   const r = id ? DB.repostajes.find(x=>x.id===id) : {fecha:hoy(), lleno:true};
   abrir(id?'Repostaje':'Nuevo repostaje',
-    campo('fecha','Fecha','date',r.fecha)+
-    '<div class="grid2">'+campo('km','Kilómetros','number',r.km,num(kmActual()||0))+
-    campo('litros','Litros','number',r.litros)+'</div>'+
-    '<div class="grid2">'+campo('precioL','Precio por litro (€)','number',r.precioL)+
-    campo('total','Total pagado (€)','number',r.total)+'</div>'+
-    '<div class="note" style="margin:-4px 0 12px">Rellena dos de los tres y calculo el que falte.</div>'+
-    campo('lleno','','check',r.lleno===undefined?true:r.lleno,'Depósito lleno hasta arriba')+
-    '<div class="note" style="margin:-2px 0 12px">Solo con depósitos llenos sale el consumo real.</div>'+
+    '<div class="grid2">'+campo('fecha','Fecha','date',r.fecha)+
+    campo('total','Importe (€)','number',r.total)+'</div>'+
+    campo('trip','Km recorridos','number',r.trip,'los del cuentakilómetros parcial')+
+    '<div class="note" style="margin:-4px 0 14px">Con esto tres ya te calculo el consumo, estimando los litros a '+
+    num(precioRef(),2)+' €/L. Lo cambias en Ajustes.</div>'+
+    '<div class="sep"></div><div class="eyebrow" style="margin-bottom:10px">Si lo sabes</div>'+
+    '<div class="grid2">'+campo('litros','Litros','number',r.litros)+
+    campo('precioL','Precio por litro (€)','number',r.precioL)+'</div>'+
+    campo('km','Odómetro (km totales)','number',r.km,num(kmActual()||0))+
     campo('estacion','Gasolinera','text',r.estacion,'Repsol A-49')+
+    campo('lleno','','check',r.lleno===undefined?true:r.lleno,'Depósito lleno hasta arriba')+
     campo('notas','Notas','area',r.notas)+
     acciones(id));
   wire(()=>{
     const d = leer();
     let L=n2(d.litros), P=n2(d.precioL), T=n2(d.total);
     if(L&&P&&!T) T = L*P; if(L&&T&&!P) P = T/L; if(P&&T&&!L) L = T/P;
-    if(!d.fecha || !L){ toast('Necesito al menos la fecha y los litros'); return; }
-    const obj = Object.assign({}, d, {litros:L, precioL:P?P.toFixed(3):'', total:T?T.toFixed(2):'',
-      id:id||uid(), cid:DB.activo});
+    if(!d.fecha || (!T && !L)){ toast('Necesito la fecha y el importe (o los litros)'); return; }
+    const obj = Object.assign({}, d, {litros:L?L.toFixed(2):'', precioL:P?P.toFixed(3):'',
+      total:T?T.toFixed(2):'', id:id||uid(), cid:DB.activo});
     if(id) DB.repostajes[DB.repostajes.findIndex(x=>x.id===id)] = obj; else DB.repostajes.push(obj);
     guardar(); cerrar(); render(); toast(id?'Repostaje actualizado':'Repostaje guardado');
   }, ()=>{ DB.repostajes = DB.repostajes.filter(x=>x.id!==id); guardar(); cerrar(); render(); toast('Eliminado'); });
@@ -990,6 +1035,10 @@ function menu(){
   h += '<div class="sep"></div><div class="eyebrow" style="margin-bottom:8px">Color del cuadro</div>'+
     '<div class="chips">'+[['amber','Elegance'],['eco','Eco'],['perf','Performance'],['blue','Nórdico']]
       .map(t=>'<button class="chip'+(DB.tema===t[0]?' on':'')+'" data-tema="'+t[0]+'">'+t[1]+'</button>').join('')+'</div>';
+  h += '<div class="sep"></div><div class="eyebrow" style="margin-bottom:8px">Precio de referencia</div>'+
+    campo('precioRef','€ por litro','number',DB.precioRef||'1.50')+
+    '<div class="note" style="margin:-6px 0 10px">Se usa para estimar los litros de los repostajes en los que solo apuntas el importe.</div>'+
+    '<div class="btnrow"><button class="btn gh" id="refBtn">Guardar precio</button></div>';
   h += '<div class="sep"></div><div class="eyebrow" style="margin-bottom:8px">Copias de seguridad</div>'+
     '<div class="btnrow"><button class="btn gh" id="expBtn">Exportar</button>'+
     '<button class="btn gh" id="impBtn">Importar</button></div>'+
@@ -1009,6 +1058,10 @@ function menu(){
     ['repostajes','gastos','mantenimientos','averias'].forEach(k=>DB[k]=DB[k].filter(r=>r.cid!==c.id));
     DB.coches = DB.coches.filter(x=>x.id!==c.id); DB.activo = DB.coches[0].id;
     guardar(); cerrar(); render(); toast('Coche eliminado');
+  };
+  document.getElementById('refBtn').onclick = ()=>{
+    const v = document.querySelector('#sheetBody [data-k="precioRef"]').value.trim();
+    DB.precioRef = v || '1.50'; guardar(); render(); toast('Precio de referencia: '+num(precioRef(),2)+' €/L');
   };
   document.getElementById('expBtn').onclick = exportar;
   document.getElementById('impBtn').onclick = ()=>importar(false);
@@ -1055,10 +1108,10 @@ function importarCSV(txt){
     let f = p[0];
     if(/^\d{2}[\/\-]\d{2}[\/\-]\d{4}$/.test(f)){ const q=f.split(/[\/\-]/); f = q[2]+'-'+q[1]+'-'+q[0]; }
     if(!/^\d{4}-\d{2}-\d{2}$/.test(f)) return;
-    const litros = n2(p[2]);
-    if(!litros) return;
-    DB.repostajes.push({id:uid(), cid:DB.activo, fecha:f, km:p[1]||'', litros:litros,
-      precioL:n2(p[3])||'', total:n2(p[4])||'', lleno:true, estacion:p[5]||'', notas:''});
+    const litros = n2(p[2]), total = n2(p[4]), trip = n2(p[5]);
+    if(!litros && !total) return;
+    DB.repostajes.push({id:uid(), cid:DB.activo, fecha:f, km:p[1]||'', litros:litros||'',
+      precioL:n2(p[3])||'', total:total||'', trip:trip||'', lleno:true, estacion:p[6]||'', notas:''});
     n++;
   });
   if(!n) throw new Error('vacio');
