@@ -1,0 +1,224 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Descarga los precios de carburante del Ministerio y deja un JSON pequeno
+con las estaciones de las provincias elegidas.
+
+Pensado para ejecutarse en GitHub Actions: el archivo resultante se publica
+en el mismo sitio que la app, asi que el navegador se lo pide a su propio
+dominio y no hay problema de CORS.
+
+Variables de entorno:
+  PROVINCIAS  ids separados por comas (41 = Sevilla). Por defecto "41".
+  DESTINO     ruta del archivo de salida. Por defecto "datos/gasolineras.json".
+"""
+
+import json
+import os
+import ssl
+import sys
+import time
+import unicodedata
+import urllib.error
+import urllib.request
+
+RAIZ = "https://sedeaplicaciones.minetur.gob.es/ServiciosRESTCarburantes/"
+# el servicio aparece con las dos grafias segun la fuente que mires
+RUTAS = ["PreciosCarburantes", "PrecioCarburantes"]
+
+# algunos servicios de la administracion cortan las peticiones que no
+# parecen un navegador, asi que nos presentamos como uno
+CABECERAS = {
+    "User-Agent": ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                   "AppleWebKit/537.36 (KHTML, like Gecko) "
+                   "Chrome/126.0.0.0 Safari/537.36"),
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "es-ES,es;q=0.9",
+    "Referer": "https://sedeaplicaciones.minetur.gob.es/",
+    "Connection": "close",
+}
+
+PROVINCIAS = [p.strip() for p in os.environ.get("PROVINCIAS", "41").split(",") if p.strip()]
+DESTINO = os.environ.get("DESTINO", "datos/gasolineras.json")
+
+CARBURANTES = {
+    "d":   ["precio gasoleo a"],
+    "dp":  ["precio gasoleo premium"],
+    "g95": ["precio gasolina 95 e5", "precio gasolina 95 e10",
+            "precio gasolina 95 e5 premium"],
+    "g98": ["precio gasolina 98 e5", "precio gasolina 98 e10"],
+}
+
+_NACIONAL = None  # cache del listado completo por si hace falta
+
+
+def norm(s):
+    s = unicodedata.normalize("NFKD", str(s))
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    return " ".join(s.lower().split())
+
+
+def descargar(url, intentos=3):
+    """devuelve el JSON, o lanza RuntimeError con un mensaje que sirva de algo"""
+    ultimo = ""
+    for n in range(1, intentos + 1):
+        try:
+            req = urllib.request.Request(url, headers=CABECERAS)
+            t0 = time.time()
+            with urllib.request.urlopen(req, timeout=180,
+                                        context=ssl.create_default_context()) as r:
+                crudo = r.read()
+            print("    recibidos %.0f KB en %.1f s" % (len(crudo) / 1024, time.time() - t0))
+            for cod in ("utf-8-sig", "utf-8", "latin-1"):
+                try:
+                    return json.loads(crudo.decode(cod))
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    continue
+            ultimo = "respuesta ilegible, empieza por: %r" % crudo[:200]
+        except urllib.error.HTTPError as e:
+            cuerpo = ""
+            try:
+                cuerpo = e.read()[:200].decode("utf-8", "replace")
+            except Exception:
+                pass
+            ultimo = "HTTP %s %s | %s" % (e.code, e.reason, cuerpo)
+        except urllib.error.URLError as e:
+            ultimo = "sin conexion: %s" % e.reason
+        except Exception as e:
+            ultimo = "%s: %s" % (type(e).__name__, e)
+
+        print("    intento %d fallido -> %s" % (n, ultimo))
+        if n < intentos:
+            time.sleep(4 * n)
+    raise RuntimeError(ultimo)
+
+
+def lista_provincia(prov):
+    """prueba las dos rutas del filtro y, si no, tira del listado nacional"""
+    global _NACIONAL
+    errores = []
+    for ruta in RUTAS:
+        url = RAIZ + ruta + "/EstacionesTerrestres/FiltroProvincia/" + prov
+        print("  probando %s" % url)
+        try:
+            datos = descargar(url, intentos=2)
+            lista = datos.get("ListaEESSPrecio")
+            if lista:
+                return datos.get("Fecha", ""), lista
+            errores.append("%s: respuesta sin estaciones" % ruta)
+        except RuntimeError as e:
+            errores.append("%s: %s" % (ruta, e))
+
+    print("  el filtro por provincia no ha funcionado")
+    print("  voy con el listado nacional, que pesa bastante mas")
+    if _NACIONAL is None:
+        for ruta in RUTAS:
+            try:
+                _NACIONAL = descargar(RAIZ + ruta + "/EstacionesTerrestres/", intentos=2)
+                break
+            except RuntimeError as e:
+                errores.append("nacional %s: %s" % (ruta, e))
+    if not _NACIONAL:
+        raise RuntimeError(" | ".join(errores))
+
+    todas = _NACIONAL.get("ListaEESSPrecio") or []
+    filtradas = [x for x in todas
+                 if str(x.get("IDProvincia", "")).lstrip("0") == prov.lstrip("0")]
+    return _NACIONAL.get("Fecha", ""), filtradas
+
+
+def numero(v):
+    if v is None:
+        return None
+    v = str(v).strip().replace(",", ".")
+    if not v:
+        return None
+    try:
+        n = float(v)
+    except ValueError:
+        return None
+    return round(n, 3) if 0.1 < n < 5 else None
+
+
+def coord(reg, clave):
+    """las longitudes espanolas son negativas, asi que van sin filtro de rango"""
+    v = reg.get(clave)
+    if v is None:
+        return None
+    try:
+        return round(float(str(v).strip().replace(",", ".")), 5)
+    except ValueError:
+        return None
+
+
+def coge(reg, claves):
+    for c in claves:
+        if c in reg:
+            n = numero(reg[c])
+            if n is not None:
+                return n
+    return None
+
+
+def main():
+    estaciones = []
+    fecha = ""
+    for prov in PROVINCIAS:
+        print("Provincia %s:" % prov)
+        try:
+            f, lista = lista_provincia(prov)
+        except RuntimeError as e:
+            print("ERROR: no he podido descargar los datos -> %s" % e, file=sys.stderr)
+            return 1
+
+        fecha = f or fecha
+        print("  %d estaciones en bruto" % len(lista))
+
+        for reg in lista:
+            r = {norm(k): v for k, v in reg.items()}
+            precios = {}
+            for salida, claves in CARBURANTES.items():
+                p = coge(r, claves)
+                if p is not None:
+                    precios[salida] = p
+            if not precios:
+                continue
+
+            lat = coord(r, "latitud")
+            lon = coord(r, "longitud (wgs84)")
+            if lon is None:
+                lon = coord(r, "longitud")
+            if lat is None or lon is None:
+                continue
+
+            estaciones.append({
+                "r": str(r.get("rotulo", "")).strip().title(),
+                "d": str(r.get("direccion", "")).strip().title(),
+                "m": str(r.get("municipio", "")).strip(),
+                "h": str(r.get("horario", "")).strip(),
+                "lat": lat,
+                "lon": lon,
+                "p": precios,
+            })
+
+    if not estaciones:
+        print("ERROR: no ha salido ninguna estacion, no toco el archivo", file=sys.stderr)
+        return 1
+
+    estaciones.sort(key=lambda e: (e["m"], e["r"]))
+    salida = {"fecha": fecha, "provincias": PROVINCIAS,
+              "n": len(estaciones), "e": estaciones}
+
+    carpeta = os.path.dirname(DESTINO)
+    if carpeta:
+        os.makedirs(carpeta, exist_ok=True)
+    with open(DESTINO, "w", encoding="utf-8") as f:
+        json.dump(salida, f, ensure_ascii=False, separators=(",", ":"))
+
+    print("Escrito %s: %d estaciones, %.0f KB, datos del %s"
+          % (DESTINO, len(estaciones), os.path.getsize(DESTINO) / 1024, fecha))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
