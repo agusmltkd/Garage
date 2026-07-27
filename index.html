@@ -109,7 +109,10 @@ section.view.on{display:block}
 
 /* mapa de gasolineras */
 .mapa{height:280px;border-radius:var(--r);overflow:hidden;border:1px solid var(--line);
-  margin-bottom:14px;background:var(--panel)}
+  margin-bottom:14px;background:var(--panel);
+  /* Leaflet apila sus capas hasta z-index 1000; con esto se quedan
+     encerradas aqui dentro y no tapan la hoja ni las pestanas */
+  position:relative;z-index:0;isolation:isolate}
 .mapa:empty{display:none}
 .leaflet-container{background:var(--bg2)!important;font-family:var(--body)}
 .leaflet-control-attribution{background:rgba(21,24,27,.75)!important;color:var(--dim2)!important;
@@ -196,10 +199,10 @@ select{-webkit-appearance:none;appearance:none;
 .btnrow{display:flex;gap:10px;margin-top:6px}
 
 /* hoja modal */
-.scrim{position:fixed;inset:0;background:rgba(8,10,12,.66);z-index:60;opacity:0;
+.scrim{position:fixed;inset:0;background:rgba(8,10,12,.66);z-index:1200;opacity:0;
   pointer-events:none;transition:opacity .22s}
 .scrim.on{opacity:1;pointer-events:auto}
-.sheet{position:fixed;left:0;right:0;bottom:0;z-index:61;max-height:92vh;
+.sheet{position:fixed;left:0;right:0;bottom:0;z-index:1201;max-height:92vh;
   background:var(--bg2);border-top:1px solid var(--line2);
   border-radius:20px 20px 0 0;transform:translateY(102%);transition:transform .28s cubic-bezier(.32,.72,0,1);
   display:flex;flex-direction:column}
@@ -249,7 +252,7 @@ select{-webkit-appearance:none;appearance:none;
 
 .toast{position:fixed;left:50%;bottom:calc(96px + var(--safe-b));transform:translate(-50%,20px);
   background:var(--panel3);border:1px solid var(--line2);color:var(--txt);padding:10px 16px;
-  border-radius:10px;z-index:90;opacity:0;transition:.25s;font-size:14px;max-width:88vw;text-align:center}
+  border-radius:10px;z-index:1300;opacity:0;transition:.25s;font-size:14px;max-width:88vw;text-align:center}
 .toast.on{opacity:1;transform:translate(-50%,0)}
 .note{font-size:12.5px;color:var(--dim2);line-height:1.5}
 .sep{height:1px;background:var(--line);margin:16px 0}
@@ -319,7 +322,7 @@ select{-webkit-appearance:none;appearance:none;
 <div class="toast" id="toast"></div>
 <script>
 /* ===================== ESTADO ===================== */
-const VERSION = '9 · 27/07/2026';
+const VERSION = '10 · 27/07/2026';
 const KEY = 'garaje.v1';
 const hoy = () => new Date().toISOString().slice(0,10);
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,7);
