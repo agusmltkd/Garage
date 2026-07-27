@@ -901,8 +901,13 @@ function gasCerca(){
 function pintarPrecios(){
   const cab = document.getElementById('gasCab');
   if(!cab) return;
-  if(gasEstado === 'cargando'){ cab.innerHTML = '<div class="card tight"><div class="note">Buscando precios…</div></div>'; }
   if(gasEstado === 'nada'){ cargarGas(); return; }
+  if(gasEstado === 'cargando'){
+    cab.innerHTML = '<div class="card tight"><div class="note">Buscando precios…</div></div>';
+    const l = document.getElementById('gasLista'); if(l) l.innerHTML = '';
+    return;
+  }
+  if(!GAS || !GAS.e) gasEstado = 'error';
   if(gasEstado === 'error'){
     cab.innerHTML = '<div class="card"><div class="blank"><div class="big">Todavía no hay precios</div>'+
       '<p>Falta el archivo <b>datos/gasolineras.json</b>. Lo genera la tarea de GitHub: entra en la pestaña Actions '+
@@ -991,7 +996,12 @@ function cargarLeaflet(){
 
 function cargarGas(recargar){
   gasEstado = 'cargando';
-  if(vista==='precios') pintarPrecios();
+  /* la peticion sale primero: si algo falla al pintar, los datos siguen viniendo */
+  fetch('datos/gasolineras.json' + (recargar?('?t='+Date.now()):''), {cache: recargar?'reload':'default'})
+    .then(r => r.ok ? r.json() : Promise.reject(r.status))
+    .then(j => { GAS = j; gasEstado = 'ok'; if(vista==='precios') pintarPrecios(); })
+    .catch(e => { console.warn('precios:', e); gasEstado = 'error';
+                  if(vista==='precios') pintarPrecios(); });
   /* ubicacion en paralelo, sin bloquear */
   if(!gasPos && navigator.geolocation){
     navigator.geolocation.getCurrentPosition(
@@ -999,10 +1009,7 @@ function cargarGas(recargar){
              if(vista==='precios' && gasEstado==='ok') pintarPrecios(); },
       () => {}, {timeout:8000, maximumAge:600000});
   }
-  fetch('datos/gasolineras.json' + (recargar?('?t='+Date.now()):''), {cache: recargar?'reload':'default'})
-    .then(r => r.ok ? r.json() : Promise.reject(r.status))
-    .then(j => { GAS = j; gasEstado = 'ok'; if(vista==='precios') pintarPrecios(); })
-    .catch(() => { gasEstado = 'error'; if(vista==='precios') pintarPrecios(); });
+  if(vista==='precios') pintarPrecios();
 }
 
 function verGasolinera(e){
@@ -1656,13 +1663,13 @@ function render(){
   if(vista==='resumen') pintarTrayecto();
   if(vista==='precios'){
     gasMapa = null;
-    pintarPrecios();
     const rec = document.getElementById('gasRecargar');
     if(rec) rec.onclick = ()=>{ GAS=null; gasEstado='nada'; gasPos=null; pintarPrecios(); };
     const rad = document.getElementById('gasRad');
     if(rad) rad.onchange = ()=>{ gasRadio = Number(rad.value); pintarPrecios(); };
     const ord = document.getElementById('gasOrd');
     if(ord) ord.onchange = ()=>{ gasOrden = ord.value; pintarPrecios(); };
+    pintarPrecios();
   }
   if(vista==='ficha'){
     const b = document.getElementById('addDoc'); if(b) b.onclick = anadirDoc;
