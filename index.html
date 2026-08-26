@@ -322,7 +322,7 @@ select{-webkit-appearance:none;appearance:none;
 <div class="toast" id="toast"></div>
 <script>
 /* ===================== ESTADO ===================== */
-const VERSION = '10 · 27/07/2026';
+const VERSION = '11 · 26/08/2026';
 const KEY = 'garaje.v1';
 const hoy = () => new Date().toISOString().slice(0,10);
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,7);
@@ -857,7 +857,11 @@ function blank(t,p,nuevo,btn){
 }
 /* ===================== PRECIOS DE CARBURANTE ===================== */
 const CARB = [['d','Gasóleo A'],['dp','Gasóleo premium'],['g95','Gasolina 95'],['g98','Gasolina 98']];
-let GAS = null;           // datos del archivo
+let GAS = null;           // datos de la provincia cargada
+let GASIDX = null;        // indice de provincias disponibles
+let gasProv = null;       // provincia que se esta mostrando
+let gasAviso = '';        // aviso cuando no hay datos de tu zona
+let gasFuera = false;     // estas fuera de la provincia que se muestra
 let gasEstado = 'nada';   // nada | cargando | ok | error
 let gasCarb = 'd';
 let gasRadio = 10;
@@ -879,6 +883,7 @@ function vPrecios(){
   h += '<div id="gasMapa" class="mapa"></div>';
   h += '<div class="card"><div class="hd"><h3>Cerca de ti</h3>'+
        '<button class="act" id="gasRecargar">Actualizar</button></div>'+
+       '<div id="gasProvBox"></div>'+
        '<div class="grid2">'+
          '<label class="f"><span class="l">Distancia</span><select id="gasRad">'+
            [5,10,25,50].map(r=>'<option value="'+r+'"'+(gasRadio===r?' selected':'')+'>'+r+' km</option>').join('')+
@@ -898,7 +903,7 @@ function gasCerca(){
   return GAS.e
     .filter(e => e.p && e.p[gasCarb] != null)
     .map(e => Object.assign({}, e, {km: o ? distKm(o.lat,o.lon,e.lat,e.lon) : null}))
-    .filter(e => !o || e.km <= gasRadio)
+    .filter(e => !o || gasFuera || e.km <= gasRadio)
     .sort((a,b) => gasOrden==='dist' && o ? a.km-b.km : (a.p[gasCarb]-b.p[gasCarb]));
 }
 
@@ -928,13 +933,17 @@ function pintarPrecios(){
   cab.innerHTML = '<div class="cluster">'+
     cell('Más barata', barato?num(barato,3):'—','€/L', lista.length?esc(lista.slice().sort((a,b)=>a.p[gasCarb]-b.p[gasCarb])[0].r):'sin datos', true)+
     cell('Diferencia', (barato&&caro)?num((caro-barato)*100,0):'—','cént', 'entre la más barata y la más cara')+
-    cell(nom, lista.length,'', gasPos?('a menos de '+gasRadio+' km'):'toda la provincia')+
-    cell('Datos del', (GAS.fecha||'—').slice(0,10),'', 'según el Ministerio')+
-  '</div>';
+    cell(nom, lista.length,'', (gasPos && !gasFuera) ? ('a menos de '+gasRadio+' km') : 'toda la provincia')+
+    cell('Datos del', (GAS.fecha||'—').slice(0,10),'', gasProv ? gasProv.n : 'según el Ministerio')+
+  '</div>'+
+  (gasAviso ? '<div class="card tight" style="border-color:rgba(229,169,63,.45)">'+
+    '<div class="note" style="color:var(--warn)">'+esc(gasAviso)+
+    ' Puedes cambiar de provincia abajo.</div></div>' : '');
 
   const cont = document.getElementById('gasLista');
   if(!lista.length){
-    cont.innerHTML = '<div class="note">No hay estaciones con '+esc(nom)+' en ese radio. Prueba a ampliarlo.</div>';
+    cont.innerHTML = '<div class="note">No hay estaciones con '+esc(nom)+
+      (gasFuera ? ' en esta provincia.' : ' en ese radio. Prueba a ampliarlo.')+'</div>';
   } else {
     const t1 = barato + (caro-barato)/3, t2 = barato + 2*(caro-barato)/3;
     cont.innerHTML = lista.slice(0,40).map((e,i)=>{
@@ -947,7 +956,19 @@ function pintarPrecios(){
         '<div class="amt" style="color:'+col+'">'+num(p,3)+'<em>€/L</em></div></div>';
     }).join('');
   }
+  pintarProvincias();
   pintarMapa(lista.slice(0,40), barato, caro);
+}
+
+function pintarProvincias(){
+  const box = document.getElementById('gasProvBox');
+  if(!box) return;
+  const ps = (GASIDX && GASIDX.provincias) || [];
+  if(ps.length < 2){ box.innerHTML = ''; return; }
+  box.innerHTML = '<label class="f"><span class="l">Provincia</span><select id="gasProvSel">'+
+    ps.map(p=>'<option value="'+p.id+'"'+(gasProv && gasProv.id===p.id?' selected':'')+'>'+
+      esc(p.n)+' · '+p.est+' estaciones</option>').join('')+'</select></label>';
+  document.getElementById('gasProvSel').onchange = function(){ cargarGas(false, this.value); };
 }
 
 function pintarMapa(lista, barato, caro){
@@ -999,25 +1020,71 @@ function cargarLeaflet(){
 }
 
 let gasReloj = null;
-function cargarGas(recargar){
-  gasEstado = 'cargando';
+function ubicar(){
+  return new Promise(res=>{
+    if(!navigator.geolocation) return res(null);
+    navigator.geolocation.getCurrentPosition(
+      p => res({lat:p.coords.latitude, lon:p.coords.longitude}),
+      () => res(null), {timeout:9000, maximumAge:60000});
+  });
+}
+
+/* la provincia cuya caja contiene tu posicion; si ninguna, la mas cercana */
+function elegirProvincia(pos){
+  const ps = (GASIDX && GASIDX.provincias) || [];
+  if(!ps.length) return null;
+  if(!pos) return ps[0];
+  const dentro = ps.find(p => pos.lat>=p.min[0] && pos.lat<=p.max[0] &&
+                              pos.lon>=p.min[1] && pos.lon<=p.max[1]);
+  if(dentro) return dentro;
+  return ps.slice().sort((a,b)=> distKm(pos.lat,pos.lon,a.lat,a.lon) -
+                                 distKm(pos.lat,pos.lon,b.lat,b.lon))[0];
+}
+
+function cargarGas(recargar, forzar){
+  gasEstado = 'cargando'; gasAviso = '';
   clearTimeout(gasReloj);
   gasReloj = setTimeout(()=>{
     if(gasEstado === 'cargando'){ gasEstado = 'error'; if(vista==='precios') pintarPrecios(); }
-  }, 15000);
-  /* la peticion sale primero: si algo falla al pintar, los datos siguen viniendo */
-  fetch('datos/gasolineras.json' + (recargar?('?t='+Date.now()):''), {cache: recargar?'reload':'default'})
-    .then(r => r.ok ? r.json() : Promise.reject(r.status))
-    .then(j => { clearTimeout(gasReloj); GAS = j; gasEstado = 'ok'; if(vista==='precios') pintarPrecios(); })
-    .catch(e => { clearTimeout(gasReloj); console.warn('precios:', e); gasEstado = 'error';
-                  if(vista==='precios') pintarPrecios(); });
-  /* ubicacion en paralelo, sin bloquear */
-  if(!gasPos && navigator.geolocation){
-    navigator.geolocation.getCurrentPosition(
-      p => { gasPos = {lat:p.coords.latitude, lon:p.coords.longitude};
-             if(vista==='precios' && gasEstado==='ok') pintarPrecios(); },
-      () => {}, {timeout:8000, maximumAge:600000});
+  }, 20000);
+
+  const cb = recargar ? ('?t='+Date.now()) : '';
+  const opc = {cache: recargar ? 'reload' : 'default'};
+  const pedir = ruta => fetch('datos/'+ruta+cb, opc)
+    .then(r => r.ok ? r.json() : Promise.reject('HTTP '+r.status));
+
+  const pIdx = (GASIDX && !recargar) ? Promise.resolve(GASIDX)
+             : pedir('indice.json').then(j => (GASIDX = j)).catch(()=>null);
+  /* al recargar volvemos a preguntar donde estas: si te has movido, cambia todo */
+  const pPos = (gasPos && !recargar && !forzar) ? Promise.resolve(gasPos)
+             : ubicar().then(p => (gasPos = p || gasPos));
+
+  function listo(){
+    clearTimeout(gasReloj); gasEstado = 'ok';
+    if(vista==='precios') pintarPrecios();
   }
+
+  Promise.all([pIdx, pPos]).then(([idx, pos])=>{
+    let prov = null;
+    if(idx && idx.provincias && idx.provincias.length){
+      prov = forzar ? idx.provincias.find(p => p.id === forzar) : null;
+      if(!prov) prov = elegirProvincia(pos);
+    }
+    if(!prov){
+      // sin indice, caemos al archivo unico de siempre
+      return pedir('gasolineras.json').then(j => { GAS = j; gasProv = null; listo(); });
+    }
+    gasFuera = !!(pos && !(pos.lat>=prov.min[0] && pos.lat<=prov.max[0] &&
+                           pos.lon>=prov.min[1] && pos.lon<=prov.max[1]));
+    if(gasFuera && !forzar){
+      gasAviso = 'No tengo precios de donde estás. Te enseño ' + prov.n + '.';
+    }
+    return pedir(prov.archivo).then(j => { GAS = j; gasProv = prov; listo(); });
+  }).catch(e => {
+    clearTimeout(gasReloj); console.warn('precios:', e);
+    gasEstado = 'error'; if(vista==='precios') pintarPrecios();
+  });
+
   if(vista==='precios') pintarPrecios();
 }
 
@@ -1674,7 +1741,7 @@ function render(){
   if(vista==='precios'){
     gasMapa = null;
     const rec = document.getElementById('gasRecargar');
-    if(rec) rec.onclick = ()=>{ GAS=null; gasEstado='nada'; gasPos=null; pintarPrecios(); };
+    if(rec) rec.onclick = ()=>{ GAS=null; gasPos=null; cargarGas(true); };
     const rad = document.getElementById('gasRad');
     if(rad) rad.onchange = ()=>{ gasRadio = Number(rad.value); pintarPrecios(); };
     const ord = document.getElementById('gasOrd');
