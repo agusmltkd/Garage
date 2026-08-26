@@ -13,6 +13,7 @@ Variables de entorno:
   DESTINO     ruta del archivo de salida. Por defecto "datos/gasolineras.json".
 """
 
+import datetime
 import json
 import os
 import ssl
@@ -160,6 +161,34 @@ def coge(reg, claves):
     return None
 
 
+def precios_recientes(limite_dias=3):
+    """Si ya hay precios publicados y no son muy viejos, un corte puntual del
+    Ministerio no debe tenir la ejecucion en rojo: la app sigue funcionando con
+    los ultimos datos. Si llevan dias sin actualizarse, entonces si falla."""
+    if not os.path.exists(DESTINO):
+        print("No hay precios previos que conservar.", file=sys.stderr)
+        return False
+    try:
+        with open(DESTINO, encoding="utf-8") as f:
+            fecha = json.load(f).get("fecha", "")
+        # formato del Ministerio: 27/07/2026 8:35:12
+        d, m, a = fecha.split()[0].split("/")
+        publicado = datetime.date(int(a), int(m), int(d))
+        edad = (datetime.date.today() - publicado).days
+    except Exception:
+        print("No he podido leer la fecha de los precios previos.", file=sys.stderr)
+        return False
+
+    if edad <= limite_dias:
+        print("AVISO: me quedo con los precios del %s (%d dias). "
+              "La app sigue funcionando; si esto se repite varios dias, saltara en rojo."
+              % (fecha, edad))
+        return True
+    print("Los precios publicados tienen %d dias, demasiados para ignorarlo." % edad,
+          file=sys.stderr)
+    return False
+
+
 def main():
     estaciones = []
     fecha = ""
@@ -168,8 +197,8 @@ def main():
         try:
             f, lista = lista_provincia(prov)
         except RuntimeError as e:
-            print("ERROR: no he podido descargar los datos -> %s" % e, file=sys.stderr)
-            return 1
+            print("El Ministerio no responde -> %s" % e, file=sys.stderr)
+            return 0 if precios_recientes() else 1
 
         fecha = f or fecha
         print("  %d estaciones en bruto" % len(lista))
