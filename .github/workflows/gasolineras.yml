@@ -33,7 +33,7 @@ jobs:
           DESTINO: 'datos/gasolineras.json'
           # El Ministerio bloquea las direcciones de GitHub. Pon aqui la URL de
           # tu Worker de Cloudflare (sin barra final) y la descarga pasa por el.
-          PROXY: 'https://carburante.TU-USUARIO.workers.dev'
+          PROXY: 'https://carburante.mayoragustin01.workers.dev'
           PYTHONUNBUFFERED: '1'
         run: python scripts/gasolineras.py
 
