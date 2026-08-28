@@ -40,6 +40,9 @@ CABECERAS = {
 }
 
 PROVINCIAS = [p.strip() for p in os.environ.get("PROVINCIAS", "41").split(",") if p.strip()]
+# El Ministerio cierra la conexion a las direcciones de GitHub Actions. Si aqui
+# pones la URL del Worker de Cloudflare, la descarga pasa por el y funciona.
+PROXY = os.environ.get("PROXY", "").rstrip("/")
 DESTINO = os.environ.get("DESTINO", "datos/gasolineras.json")
 
 CARBURANTES = {
@@ -95,9 +98,23 @@ def descargar(url, intentos=3):
 
 
 def lista_provincia(prov):
-    """prueba las dos rutas del filtro y, si no, tira del listado nacional"""
+    """primero por el proxy, si lo hay; luego contra el Ministerio directamente"""
     global _NACIONAL
     errores = []
+
+    if PROXY:
+        url = PROXY + "/p/" + prov
+        print("  probando el proxy: %s" % url)
+        try:
+            datos = descargar(url, intentos=2)
+            lista = datos.get("ListaEESSPrecio")
+            if lista:
+                return datos.get("Fecha", ""), lista
+            errores.append("proxy: respuesta sin estaciones")
+        except RuntimeError as e:
+            errores.append("proxy: %s" % e)
+        print("  el proxy no ha dado resultado, pruebo directamente")
+
     for ruta in RUTAS:
         url = RAIZ + ruta + "/EstacionesTerrestres/FiltroProvincia/" + prov
         print("  probando %s" % url)
