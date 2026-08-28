@@ -115,6 +115,9 @@ section.view.on{display:block}
   position:relative;z-index:0;isolation:isolate}
 .mapa:empty{display:none}
 .leaflet-container{background:var(--bg2)!important;font-family:var(--body)}
+/* OpenStreetMap solo sirve mapa claro: lo invertimos para que pegue con la app.
+   El filtro va sobre las teselas, asi que no toca los marcadores de precio. */
+.leaflet-tile{filter:invert(1) hue-rotate(180deg) brightness(.92) contrast(.88) saturate(.75)}
 .leaflet-control-attribution{background:rgba(21,24,27,.75)!important;color:var(--dim2)!important;
   font-size:9px!important}
 .leaflet-control-attribution a{color:var(--dim)!important}
@@ -322,7 +325,7 @@ select{-webkit-appearance:none;appearance:none;
 <div class="toast" id="toast"></div>
 <script>
 /* ===================== ESTADO ===================== */
-const VERSION = '11 · 26/08/2026';
+const VERSION = '12 · 26/08/2026';
 const KEY = 'garaje.v1';
 const hoy = () => new Date().toISOString().slice(0,10);
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,7);
@@ -979,9 +982,9 @@ function pintarMapa(lista, barato, caro){
     if(gasMapa){ try{ gasMapa.remove(); }catch(e){} gasMapa = null; }
     const centro = gasPos ? [gasPos.lat, gasPos.lon] : [lista[0].lat, lista[0].lon];
     gasMapa = L.map(div, {zoomControl:false, attributionControl:true}).setView(centro, gasRadio<=10?12:10);
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-      maxZoom: 19, subdomains:'abcd',
-      attribution: '© OpenStreetMap · © CARTO'
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '© OpenStreetMap'
     }).addTo(gasMapa);
     const t1 = barato + (caro-barato)/3, t2 = barato + 2*(caro-barato)/3;
     const grupo = [];
