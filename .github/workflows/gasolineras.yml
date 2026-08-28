@@ -26,8 +26,10 @@ jobs:
 
       - name: Descargar precios
         env:
-          # 41 = Sevilla. Anade mas separadas por comas: '41,21,11'
-          PROVINCIAS: '41'
+          # Andalucia entera. Quita o anade las que quieras:
+          # 04 Almeria, 11 Cadiz, 14 Cordoba, 18 Granada,
+          # 21 Huelva, 23 Jaen, 29 Malaga, 41 Sevilla
+          PROVINCIAS: '41,29,11,21,14,18,23,04'
           DESTINO: 'datos/gasolineras.json'
           PYTHONUNBUFFERED: '1'
         run: python scripts/gasolineras.py
@@ -38,7 +40,7 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add datos/gasolineras.json
+          git add datos/
           if git diff --staged --quiet; then
             echo "Los precios no han cambiado, no hago commit."
             exit 0
