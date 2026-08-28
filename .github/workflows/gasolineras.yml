@@ -26,10 +26,9 @@ jobs:
 
       - name: Descargar precios
         env:
-          # Andalucia entera. Quita o anade las que quieras:
-          # 04 Almeria, 11 Cadiz, 14 Cordoba, 18 Granada,
-          # 21 Huelva, 23 Jaen, 29 Malaga, 41 Sevilla
-          PROVINCIAS: '41,29,11,21,14,18,23,04'
+          # Las 52 provincias. Si alguna falla, se salta y sigue con las demas.
+          # Para volver a solo Andalucia: '41,29,11,21,14,18,23,04'
+          PROVINCIAS: '01,02,03,04,05,06,07,08,09,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52'
           DESTINO: 'datos/gasolineras.json'
           # El Ministerio bloquea las direcciones de GitHub. Pon aqui la URL de
           # tu Worker de Cloudflare (sin barra final) y la descarga pasa por el.
