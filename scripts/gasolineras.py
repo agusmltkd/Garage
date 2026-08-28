@@ -235,13 +235,16 @@ def main():
     fecha = ""
     primero = None
 
+    fallidas = []
     for prov in PROVINCIAS:
         print("Provincia %s:" % prov)
         try:
             f, lista = lista_provincia(prov)
         except RuntimeError as e:
-            print("El Ministerio no responde -> %s" % e, file=sys.stderr)
-            return 0 if precios_recientes() else 1
+            # una provincia caida no debe tirar las demas
+            print("  no ha habido manera -> %s" % e, file=sys.stderr)
+            fallidas.append(prov)
+            continue
 
         fecha = f or fecha
         nombre, estaciones = procesar(lista)
@@ -269,9 +272,12 @@ def main():
             "max": [round(max(lats) + 0.15, 4), round(max(lons) + 0.15, 4)],
         })
 
+    if fallidas:
+        print("Provincias que han fallado: %s" % ", ".join(fallidas), file=sys.stderr)
+
     if not indice:
-        print("ERROR: ninguna provincia ha dado estaciones", file=sys.stderr)
-        return 1
+        print("ERROR: no he sacado ni una sola provincia.", file=sys.stderr)
+        return 0 if precios_recientes() else 1
 
     indice.sort(key=lambda p: p["n"])
     escribir(os.path.join(carpeta, "indice.json"),
